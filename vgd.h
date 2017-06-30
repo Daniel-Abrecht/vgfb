@@ -18,4 +18,7 @@ struct vgd_vgmx {
 	struct class * vgd_class;
 };
 
+struct class* aquire_vgd_class( void );
+int release_vgd_class( void );
+
 #endif

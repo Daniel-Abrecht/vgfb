@@ -3,11 +3,9 @@
 #include <linux/device.h>
 #include <linux/cdev.h>
 #include <linux/spinlock.h>
-#include <linux/init.h>
 #include <linux/fs.h>
-#include <asm/uaccess.h>
-
 #include "vgd.h"
+#include "vgmx.h"
 
 static struct vgd_vgmx vgmx = {
 	.name = "vgmx"
@@ -15,7 +13,6 @@ static struct vgd_vgmx vgmx = {
 
 static int vgmx_open(struct inode *inode, struct file *file)
 {
-
 	printk(KERN_INFO "vgd vgmx: device opened\n");
 
 	try_module_get(THIS_MODULE);
@@ -41,50 +38,7 @@ struct file_operations vgmx_opts = {
 	.release = vgmx_release
 };
 
-struct vgd {
-	unsigned count;
-	struct class * class;
-};
-
-DEFINE_SPINLOCK( vgd_lock );
-struct vgd vgd = {
-	.count = 0,
-	.class = 0
-};
-
-static struct class* aquire_vgd_class( void ){
-	spin_lock(&vgd_lock);
-	if( vgd.count == UINT_MAX ){
-		spin_unlock(&vgd_lock);
-		printk(KERN_ERR "vgd: Failed aquire class, counter would overflow\n");
-		return 0;
-	}
-	if (!vgd.count)
-		vgd.class = class_create(THIS_MODULE, "vgd");
-	if (!vgd.class) {
-		spin_unlock(&vgd_lock);
-		printk(KERN_ERR "vgd: Failed to create class\n");
-		return 0;
-	}
-	vgd.count++;
-	spin_unlock(&vgd_lock);
-	return vgd.class;
-}
-
-static int release_vgd_class( void ){
-	spin_lock(&vgd_lock);
-	if (!vgd.count) {
-		spin_unlock(&vgd_lock);
-		printk(KERN_ERR "vgd: class counter underflow\n");
-		return -EDOM;
-	}
-	if (!--vgd.count)
-		class_destroy( vgd.class );
-	spin_unlock(&vgd_lock);
-	return 0;
-}
-
-static int __init vgmx_init(void)
+int __init vgmx_init(void)
 {
 	int ret;
 	dev_t dev_major;
@@ -140,7 +94,7 @@ static int __init vgmx_init(void)
 		return ret;
 }
 
-static void __exit vgmx_exit(void)
+void __exit vgmx_exit(void)
 {
 	printk(KERN_INFO "vgd vgmx: Unloading device\n");
 
@@ -149,15 +103,3 @@ static void __exit vgmx_exit(void)
 	unregister_chrdev_region(vgmx.dev, 1);
 	cdev_del(vgmx.cdev);
 }
-
-module_init(vgmx_init);
-module_exit(vgmx_exit);
-
-MODULE_LICENSE("Dual MIT/GPL");
-MODULE_AUTHOR("Daniel Patrick Abrecht");
-MODULE_DESCRIPTION(
-  "Virtual graphics driver, allows to dynamically allocate "
-  "virtual graphic devices such as framebuffer devices. "
-  "This is intended to allow container hypervisors to"
-  "provide virtual displays to it's containers on the fly."
-);
