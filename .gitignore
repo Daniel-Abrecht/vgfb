@@ -4,4 +4,4 @@ Module.symvers
 *.ko*
 *.mod.*
 *.o*
-
+.kate*
