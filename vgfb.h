@@ -3,12 +3,13 @@
 
 #include <linux/list.h>
 
-struct vgfbm;
 struct vgfbm {
 	struct list_head list;
 	int id;
 	struct platform_device * pdev;
 	struct fb_info * info;
+	const struct vgfb_mode * mode;
+	void * mode_private;
 };
 
 int vgfb_create(struct vgfbm*);

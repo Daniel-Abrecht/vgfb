@@ -1,6 +1,7 @@
 #include <linux/platform_device.h>
 #include <linux/fb.h>
 #include "vgfb.h"
+#include "mode.h"
 
 static const struct fb_fix_screeninfo fix_screeninfo_defaults = {
 	.id = "VGFB",
@@ -11,19 +12,6 @@ static const struct fb_fix_screeninfo fix_screeninfo_defaults = {
 	.ypanstep = 1,
 	.ywrapstep = 1,
 	.accel = FB_ACCEL_NONE,
-};
-
-static struct fb_ops zero_ops = {
-	.fb_read = 0,
-	.fb_write = 0,
-	.fb_check_var = 0,
-	.fb_set_par = 0,
-	.fb_setcolreg = 0,
-	.fb_pan_display = 0,
-	.fb_fillrect = 0,
-	.fb_copyarea = 0,
-	.fb_imageblit = 0,
-	.fb_mmap = 0,
 };
 
 int vgfb_create(struct vgfbm* fb)
@@ -65,8 +53,8 @@ static int probe(struct platform_device * dev)
 	}
 	fb->info->fix = fix_screeninfo_defaults;
 	fb->info->flags = FBINFO_FLAG_DEFAULT;
-	fb->info->fbops = &zero_ops;
 	*(struct vgfbm**)fb->info->par = fb;
+	vgfb_mode_NONE->create(fb);
 	ret = register_framebuffer(fb->info);
 	if (ret) {
 		printk(KERN_INFO "vgfb: register_framebuffer failed (%d)\n",ret);
