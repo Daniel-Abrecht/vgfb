@@ -54,7 +54,7 @@ static int vgfbmx_open(struct inode *inode, struct file *file)
 			i++;
 		}
 		vgfbm->id = i;
-		list_add(&vgfbm->list, it);
+		list_add(&vgfbm->list, it->prev);
 	}
 	mutex_unlock(&vgfb_list_mutex);
 
