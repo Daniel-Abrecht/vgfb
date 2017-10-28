@@ -1,13 +1,14 @@
 #include <linux/platform_device.h>
+#include <linux/string.h>
 #include <linux/fb.h>
 #include "vgfb.h"
 #include "mode.h"
 
 static const struct fb_fix_screeninfo fix_screeninfo_defaults = {
-	.id = "VGFB",
+	.id = "vgfb",
 	.type = FB_TYPE_PACKED_PIXELS, // FB_TYPE_FOURCC
 	.visual = FB_VISUAL_TRUECOLOR, // FB_VISUAL_FOURCC
-	.capabilities = FB_CAP_FOURCC,
+//	.capabilities = FB_CAP_FOURCC,
 	.xpanstep = 1,
 	.ypanstep = 1,
 	.ywrapstep = 1,
@@ -78,6 +79,40 @@ static int remove(struct platform_device * dev)
 		fb->info = 0;
 	}
 	return 0;
+}
+
+int vgfb_set_mode(struct vgfbm* fb, unsigned mode)
+{
+	const struct vgfb_mode* m;
+	if (mode >= vgfb_mode_count)
+		return -EINVAL;
+	m = *vgfb_mode[mode];
+	return m->create(fb);
+}
+
+int vgfb_set_resolution(struct vgfbm* fb, unsigned long resolution[2])
+{
+	int ret;
+	struct fb_videomode mode;
+	struct fb_var_screeninfo var;
+	memset(&var,0,sizeof(var));
+	var.xres = resolution[0];
+	var.yres = resolution[1];
+	var.xres_virtual = resolution[0];
+	var.yres_virtual = resolution[1] * 2;
+	var.width = resolution[2];
+	var.height = resolution[3];
+	var.bits_per_pixel = 24;
+	var.red   = (struct fb_bitfield){ 0,8,0};
+	var.green = (struct fb_bitfield){ 8,8,0};
+	var.blue  = (struct fb_bitfield){16,8,0};
+	fb_var_to_videomode(&mode, &var);
+	ret = fb_add_videomode(&mode, &fb->info->modelist);
+	if (ret < 0)
+		goto failed;
+	return 0;
+failed:
+	return ret;
 }
 
 static struct platform_driver driver = {

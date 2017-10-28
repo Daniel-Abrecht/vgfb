@@ -15,6 +15,9 @@ struct vgfbm {
 int vgfb_create(struct vgfbm*);
 void vgfb_destroy(struct vgfbm*);
 
+int vgfb_set_mode(struct vgfbm*, unsigned);
+int vgfb_set_resolution(struct vgfbm*, unsigned long[2]);
+
 int vgfb_init(void);
 void vgfb_exit(void);
 

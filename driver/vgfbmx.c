@@ -1,4 +1,5 @@
 #include <linux/init.h>
+#include <linux/uaccess.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/device.h>
@@ -6,6 +7,7 @@
 #include <linux/cdev.h>
 #include <linux/slab.h>
 #include <linux/fs.h>
+#include "vgioctl.h"
 #include "vgfb.h"
 
 MODULE_LICENSE("Dual MIT/GPL");
@@ -93,10 +95,31 @@ static int vgfbmx_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
+static long ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	switch (cmd) {
+
+		case IOCTL_VG_SET_RESOLUTION: {
+			unsigned long resolution[4];
+			if (copy_from_user(resolution, (unsigned long __user*)arg, sizeof(resolution)))
+				return -EACCES;
+			return vgfb_set_resolution(file->private_data,resolution);
+		}
+
+		case IOCTL_VG_SET_MODE: {
+			return vgfb_set_mode(file->private_data,arg);
+		}
+
+	}
+
+	return -EINVAL;
+}
+
 struct file_operations vgfbmx_opts = {
 	.owner = THIS_MODULE,
 	.open = vgfbmx_open,
-	.release = vgfbmx_release
+	.release = vgfbmx_release,
+	.unlocked_ioctl = ioctl
 };
 
 int __init vgfbmx_init(void)
