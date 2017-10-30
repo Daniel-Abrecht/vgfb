@@ -15,6 +15,13 @@ static const struct fb_fix_screeninfo fix_screeninfo_defaults = {
 	.accel = FB_ACCEL_NONE,
 };
 
+static const struct fb_var_screeninfo var_screeninfo_defaults = {
+	.bits_per_pixel = 32,
+	.red   = { 0,8,0},
+	.green = { 8,8,0},
+	.blue  = {16,8,0},
+};
+
 int vgfb_create(struct vgfbm* fb)
 {
 	int ret;
@@ -53,6 +60,7 @@ static int probe(struct platform_device * dev)
 		goto failed;
 	}
 	fb->info->fix = fix_screeninfo_defaults;
+	fb->info->var = var_screeninfo_defaults;
 	fb->info->flags = FBINFO_FLAG_DEFAULT;
 	*(struct vgfbm**)fb->info->par = fb;
 	vgfb_mode_NONE->create(fb);
@@ -94,23 +102,44 @@ int vgfb_set_resolution(struct vgfbm* fb, unsigned long resolution[2])
 {
 	int ret;
 	struct fb_videomode mode;
-	struct fb_var_screeninfo var;
-	memset(&var,0,sizeof(var));
+	struct fb_var_screeninfo var = fb->info->var;
+	struct list_head *it, *hit;
+	bool found = false;
+
+	if( resolution[0] == 0 || resolution[1] == 0 )
+		return -EINVAL;
+
+	list_for_each_safe (it, hit, &fb->info->modelist) {
+		struct fb_videomode* mode = &list_entry(it, struct fb_modelist, list)->mode;
+		if(mode->xres == 0)
+			continue;
+		if(mode->xres == resolution[0] && mode->yres == resolution[1]){
+			found = true;
+			continue;
+		}
+		if(mode->xres == fb->info->var.xres && mode->xres == fb->info->var.xres)
+			continue;
+		list_del(it);
+		kfree(it);
+	}
+
+	if( found )
+		return 0;
+
 	var.xres = resolution[0];
 	var.yres = resolution[1];
 	var.xres_virtual = resolution[0];
 	var.yres_virtual = resolution[1] * 2;
 	var.width = resolution[2];
 	var.height = resolution[3];
-	var.bits_per_pixel = 24;
-	var.red   = (struct fb_bitfield){ 0,8,0};
-	var.green = (struct fb_bitfield){ 8,8,0};
-	var.blue  = (struct fb_bitfield){16,8,0};
 	fb_var_to_videomode(&mode, &var);
+	mode.refresh = 60;
+
 	ret = fb_add_videomode(&mode, &fb->info->modelist);
 	if (ret < 0)
 		goto failed;
 	return 0;
+
 failed:
 	return ret;
 }
