@@ -100,7 +100,7 @@ static long ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	switch (cmd) {
 
 		case IOCTL_VG_SET_RESOLUTION: {
-			unsigned long resolution[4];
+			unsigned long resolution[2];
 			if (copy_from_user(resolution, (unsigned long __user*)arg, sizeof(resolution)))
 				return -EACCES;
 			return vgfb_set_resolution(file->private_data,resolution);

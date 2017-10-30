@@ -29,8 +29,6 @@ int vgfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 		bool found = false;
 		list_for_each_safe (it, hit, &info->modelist) {
 			struct fb_videomode* mode = &list_entry(it, struct fb_modelist, list)->mode;
-			if (mode->xres == 0)
-				continue;
 			if (mode->xres == tmp.xres && mode->yres == tmp.yres)
 			{
 				found = true;
@@ -64,11 +62,6 @@ int vgfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 		var->transp = (struct fb_bitfield){32,8,0};
 	}
 
-	return 0;
-}
-
-int vgfb_set_par(struct fb_info *info)
-{
 	return 0;
 }
 

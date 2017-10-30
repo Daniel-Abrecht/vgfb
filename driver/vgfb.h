@@ -3,6 +3,8 @@
 
 #include <linux/list.h>
 
+#define VGFB_REFRESH_RATE 60lu
+
 struct vgfbm {
 	struct list_head list;
 	int id;

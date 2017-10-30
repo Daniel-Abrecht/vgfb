@@ -22,15 +22,13 @@ void run_set(char** args, size_t n){
 			fprintf(stderr,"Unknown mode \"%s\"\n",args[1]);
 		}
 	}else if(!strcmp("resolution",args[0])){
-		if( n != 5 ){
-			fprintf(stderr,"Usage: set resolution <width px> <height px> <width mm> <height mm>\n");
+		if( n != 3 ){
+			fprintf(stderr,"Usage: set resolution <width px> <height px>\n");
 			return;
 		}
-		unsigned long resolution[4];
+		unsigned long resolution[2];
 		resolution[0] = atol(args[1]);
 		resolution[1] = atol(args[2]);
-		resolution[2] = atol(args[3]);
-		resolution[3] = atol(args[4]);
 		if( ioctl( fbm, IOCTL_VG_SET_RESOLUTION, resolution ) == -1 )
 			perror("IOCTL_VG_SET_RESOLUTION failed");
 	}else{

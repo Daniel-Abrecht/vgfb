@@ -20,6 +20,9 @@ static const struct fb_var_screeninfo var_screeninfo_defaults = {
 	.red   = { 0,8,0},
 	.green = { 8,8,0},
 	.blue  = {16,8,0},
+	.xres = 800,
+	.yres = 600,
+	.pixclock = 1000000000000lu / 800lu / 600lu / VGFB_REFRESH_RATE,
 };
 
 int vgfb_create(struct vgfbm* fb)
@@ -111,8 +114,6 @@ int vgfb_set_resolution(struct vgfbm* fb, unsigned long resolution[2])
 
 	list_for_each_safe (it, hit, &fb->info->modelist) {
 		struct fb_videomode* mode = &list_entry(it, struct fb_modelist, list)->mode;
-		if(mode->xres == 0)
-			continue;
 		if(mode->xres == resolution[0] && mode->yres == resolution[1]){
 			found = true;
 			continue;
@@ -130,10 +131,9 @@ int vgfb_set_resolution(struct vgfbm* fb, unsigned long resolution[2])
 	var.yres = resolution[1];
 	var.xres_virtual = resolution[0];
 	var.yres_virtual = resolution[1] * 2;
-	var.width = resolution[2];
-	var.height = resolution[3];
+	var.pixclock = 1000000000000lu / (var.xres * var.yres * VGFB_REFRESH_RATE);
 	fb_var_to_videomode(&mode, &var);
-	mode.refresh = 60;
+	mode.refresh = VGFB_REFRESH_RATE; // just in case
 
 	ret = fb_add_videomode(&mode, &fb->info->modelist);
 	if (ret < 0)
