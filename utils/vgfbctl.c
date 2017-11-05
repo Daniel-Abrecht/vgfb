@@ -1,3 +1,10 @@
+/*
+ * Copyright (C) 2017 Daniel Patrick Abrecht
+ * 
+ * This program is dual licensed under the MIT License and
+ * the GNU General Public License v2.0
+ */
+
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
