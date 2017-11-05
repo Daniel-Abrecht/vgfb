@@ -17,7 +17,7 @@ VGFB_EXPORT_MODE(NONE,&mode)
 static ssize_t m_read(struct fb_info *info, char __user *buf, size_t count, loff_t *ppos)
 {
 	unsigned long offset = *ppos;
-	unsigned long mem_len = info->var.xres * info->var.yres * (info->var.bits_per_pixel / 8);
+	unsigned long mem_len = info->fix.smem_len;
 	if (info->state != FBINFO_STATE_RUNNING)
 		return -EPERM;
 	if (offset > mem_len)
@@ -37,7 +37,7 @@ static ssize_t m_read(struct fb_info *info, char __user *buf, size_t count, loff
 static ssize_t m_write(struct fb_info *info, const char __user *buf, size_t count, loff_t *ppos)
 {
 	unsigned long offset = *ppos;
-	unsigned long mem_len = info->var.xres * info->var.yres * (info->var.bits_per_pixel / 8);
+	unsigned long mem_len = info->fix.smem_len;
 	if (info->state != FBINFO_STATE_RUNNING)
 		return -EPERM;
 	if (offset > mem_len)
@@ -57,20 +57,12 @@ static int m_mmap(struct fb_info *info, struct vm_area_struct *vma){
 	return 0;
 }
 
-int m_set_par(struct fb_info *info)
-{
-	info->fix.smem_start = 0;
-	info->fix.smem_len = info->var.xres_virtual * info->var.yres_virtual * (info->var.bits_per_pixel / 8);
-	info->fix.line_length = info->var.xres_virtual * info->var.bits_per_pixel;
-	return 0;
-}
-
 static struct fb_ops ops = {
 	.owner = THIS_MODULE,
 	.fb_read = m_read,
 	.fb_write = m_write,
 	.fb_mmap = m_mmap,
-	.fb_set_par = m_set_par,
+	.fb_set_par = vgfb_set_par,
 	.fb_check_var = vgfb_check_var,
 	.fb_setcolreg = vgfb_setcolreg,
 	.fb_pan_display = vgfb_pan_display,

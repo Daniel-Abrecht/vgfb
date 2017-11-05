@@ -29,8 +29,6 @@ struct vgfbmx {
 };
 
 static struct vgfbmx vgfbmx;
-static DEFINE_MUTEX(vgfb_list_mutex);
-static LIST_HEAD(vgfb_list);
 
 static int vgfbmx_open(struct inode *inode, struct file *file)
 {
@@ -46,20 +44,6 @@ static int vgfbmx_open(struct inode *inode, struct file *file)
 	}
 	file->private_data = vgfbm;
 
-	mutex_lock(&vgfb_list_mutex);
-	{
-		size_t i = 0;
-		struct list_head* it;
-		list_for_each (it, &vgfb_list) {
-			if (list_entry(it, struct vgfbm, list)->id != i)
-				break;
-			i++;
-		}
-		vgfbm->id = i;
-		list_add(&vgfbm->list, it->prev);
-	}
-	mutex_unlock(&vgfb_list_mutex);
-
 	ret = vgfb_create(vgfbm);
 	if (ret)
 		goto failed_after_kzalloc;
@@ -74,40 +58,31 @@ static int vgfbmx_open(struct inode *inode, struct file *file)
 static int vgfbmx_release(struct inode *inode, struct file *file)
 {
 	struct vgfbm* vgfbm = file->private_data;
-	printk(KERN_INFO "vgfbmx: device closed\n");
 
 	vgfb_destroy(vgfbm);
-
-	mutex_lock(&vgfb_list_mutex);
-	{
-		struct list_head* it;
-		list_for_each (it, &vgfb_list) {
-			if (list_entry(it, struct vgfbm, list) != vgfbm)
-				continue;
-			list_del(it);
-			break;
-		}
-	}
-	mutex_unlock(&vgfb_list_mutex);
-
 	kfree(vgfbm);
 
+	printk(KERN_INFO "vgfbmx: device closed\n");
 	return 0;
 }
 
 static long ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
+	struct vgfbm* vgfbm = file->private_data;
+	if( !vgfbm->info )
+		return -ENODEV;
+
 	switch (cmd) {
 
 		case IOCTL_VG_SET_RESOLUTION: {
 			unsigned long resolution[2];
 			if (copy_from_user(resolution, (unsigned long __user*)arg, sizeof(resolution)))
 				return -EACCES;
-			return vgfb_set_resolution(file->private_data,resolution);
+			return vgfb_set_resolution(vgfbm,resolution);
 		}
 
 		case IOCTL_VG_SET_MODE: {
-			return vgfb_set_mode(file->private_data,arg);
+			return vgfb_set_mode(vgfbm,arg);
 		}
 
 	}

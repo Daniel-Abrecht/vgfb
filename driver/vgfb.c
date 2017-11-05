@@ -9,9 +9,7 @@ static const struct fb_fix_screeninfo fix_screeninfo_defaults = {
 	.type = FB_TYPE_PACKED_PIXELS, // FB_TYPE_FOURCC
 	.visual = FB_VISUAL_TRUECOLOR, // FB_VISUAL_FOURCC
 //	.capabilities = FB_CAP_FOURCC,
-	.xpanstep = 1,
-	.ypanstep = 1,
-	.ywrapstep = 1,
+	.ypanstep = 600,
 	.accel = FB_ACCEL_NONE,
 };
 
@@ -28,7 +26,7 @@ static const struct fb_var_screeninfo var_screeninfo_defaults = {
 int vgfb_create(struct vgfbm* fb)
 {
 	int ret;
-	fb->pdev = platform_device_alloc("vgfb", fb->id);
+	fb->pdev = platform_device_alloc("vgfb", PLATFORM_DEVID_AUTO);
 	if (!fb->pdev) {
 		printk(KERN_INFO "vgfb: platform_device_alloc failed\n");
 		ret = -ENOMEM;
@@ -66,6 +64,18 @@ static int probe(struct platform_device * dev)
 	fb->info->var = var_screeninfo_defaults;
 	fb->info->flags = FBINFO_FLAG_DEFAULT;
 	*(struct vgfbm**)fb->info->par = fb;
+	INIT_LIST_HEAD( &fb->info->modelist );
+	{
+		struct fb_videomode mode;
+		fb_var_to_videomode(&mode, &fb->info->var);
+		mode.refresh = VGFB_REFRESH_RATE;
+		ret = fb_add_videomode(&mode, &fb->info->modelist);
+		if( ret < 0 ){
+			printk("vgfb: fb_add_videomode failed\n");
+			goto failed_after_framebuffer_alloc;
+		}
+	}
+	fb->info->mode = &list_entry(fb->info->modelist.next, struct fb_modelist, list)->mode;
 	vgfb_mode_NONE->create(fb);
 	ret = register_framebuffer(fb->info);
 	if (ret) {
@@ -131,7 +141,7 @@ int vgfb_set_resolution(struct vgfbm* fb, unsigned long resolution[2])
 	var.yres = resolution[1];
 	var.xres_virtual = resolution[0];
 	var.yres_virtual = resolution[1] * 2;
-	var.pixclock = 1000000000000lu / (var.xres * var.yres * VGFB_REFRESH_RATE);
+	var.pixclock = 1000000000000lu / var.xres / var.yres / VGFB_REFRESH_RATE;
 	fb_var_to_videomode(&mode, &var);
 	mode.refresh = VGFB_REFRESH_RATE; // just in case
 

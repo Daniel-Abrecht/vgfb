@@ -7,7 +7,6 @@
 
 struct vgfbm {
 	struct list_head list;
-	int id;
 	struct platform_device * pdev;
 	struct fb_info * info;
 	const struct vgfb_mode * mode;

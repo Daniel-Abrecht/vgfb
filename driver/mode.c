@@ -1,5 +1,6 @@
 #include <linux/errno.h>
 #include <linux/fb.h>
+#include "vgfb.h"
 #include "mode.h"
 
 const struct vgfb_mode*const*const vgfb_mode[] = {
@@ -25,17 +26,15 @@ int vgfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 
 	if (!( tmp.xres == info->var.xres && tmp.yres == info->var.yres ))
 	{
-		struct list_head *it, *hit;
+		struct list_head *it;
 		bool found = false;
-		list_for_each_safe (it, hit, &info->modelist) {
+		list_for_each (it, &info->modelist) {
 			struct fb_videomode* mode = &list_entry(it, struct fb_modelist, list)->mode;
 			if (mode->xres == tmp.xres && mode->yres == tmp.yres)
 			{
 				found = true;
-				continue;
+				break;
 			}
-			list_del(it);
-			kfree(it);
 		}
 		if(!found)
 			return -EINVAL;
@@ -49,6 +48,7 @@ int vgfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 	var->yres_virtual = tmp.yres * 2;
 	var->xoffset = tmp.xoffset;
 	var->yoffset = tmp.yoffset;
+	var->pixclock = 1000000000000lu / var->xres / var->yres / VGFB_REFRESH_RATE;
 
 	if (var->bits_per_pixel == 24) {
 		var->red    = (struct fb_bitfield){ 0,8,0};
@@ -62,6 +62,27 @@ int vgfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 		var->transp = (struct fb_bitfield){32,8,0};
 	}
 
+	return 0;
+}
+
+int vgfb_set_par(struct fb_info *info){
+	{
+		struct list_head *it, *hit;
+		info->mode = 0;
+		list_for_each_safe (it, hit, &info->modelist) {
+			struct fb_videomode* mode = &list_entry(it, struct fb_modelist, list)->mode;
+			if (mode->xres == info->var.xres && mode->yres == info->var.yres) {
+				info->mode = mode;
+			} else {
+				list_del(it);
+				kfree(it);
+			}
+		}
+	}
+	info->fix.ypanstep = info->var.xres;
+	info->fix.smem_start = 0;
+	info->fix.smem_len = info->var.xres_virtual * info->var.yres_virtual * (info->var.bits_per_pixel / 8);
+	info->fix.line_length = info->var.xres_virtual * (info->var.bits_per_pixel / 8);
 	return 0;
 }
 
