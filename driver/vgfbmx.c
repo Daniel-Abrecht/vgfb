@@ -88,10 +88,6 @@ static long ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			return vgfb_set_resolution(vgfbm,resolution);
 		}
 
-		case IOCTL_VG_SET_MODE: {
-			return vgfb_set_mode(vgfbm,arg);
-		}
-
 	}
 
 	return -EINVAL;

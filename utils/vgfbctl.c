@@ -21,14 +21,7 @@ void run_set(char** args, size_t n){
 		return;
 	}
 
-	if(!strcmp("mode",args[0])){
-		if(!strcmp("normal",args[1])){
-			if( ioctl( fbm, IOCTL_VG_SET_MODE, VGFB_MODE_NORMAL ) == -1 )
-				perror("IOCTL_VG_SET_MODE failed");
-		}else{
-			fprintf(stderr,"Unknown mode \"%s\"\n",args[1]);
-		}
-	}else if(!strcmp("resolution",args[0])){
+	if(!strcmp("resolution",args[0])){
 		if( n != 3 ){
 			fprintf(stderr,"Usage: set resolution <width px> <height px>\n");
 			return;
