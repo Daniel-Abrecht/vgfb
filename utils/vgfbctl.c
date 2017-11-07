@@ -22,8 +22,8 @@ void run_set(char** args, size_t n){
 	}
 
 	if(!strcmp("mode",args[0])){
-		if(!strcmp("none",args[1])){
-			if( ioctl( fbm, IOCTL_VG_SET_MODE, VGFB_MODE_NONE ) == -1 )
+		if(!strcmp("normal",args[1])){
+			if( ioctl( fbm, IOCTL_VG_SET_MODE, VGFB_MODE_NORMAL ) == -1 )
 				perror("IOCTL_VG_SET_MODE failed");
 		}else{
 			fprintf(stderr,"Unknown mode \"%s\"\n",args[1]);

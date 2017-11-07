@@ -3,10 +3,11 @@
 
 #include "vg.h"
 
-
 struct vgfbm;
 struct vgfb_mode {
 	int(*create)(struct vgfbm*);
+	int(*realloc_screen)(struct vgfbm*);
+	void(*free_screen)(struct vgfbm*);
 	int(*destroy)(struct vgfbm*);
 };
 
@@ -18,11 +19,6 @@ VGFB_MODES
 
 struct fb_var_screeninfo;
 struct fb_info;
-
-int vgfb_set_par(struct fb_info *info);
-int vgfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info);
-int vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info);
-int vgfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue, u_int transp, struct fb_info *info);
 
 extern const struct vgfb_mode*const*const vgfb_mode[];
 extern const unsigned vgfb_mode_count;

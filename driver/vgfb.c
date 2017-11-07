@@ -83,7 +83,12 @@ static int probe(struct platform_device * dev)
 		}
 	}
 	fb->info->mode = &list_entry(fb->info->modelist.next, struct fb_modelist, list)->mode;
-	vgfb_mode_NONE->create(fb);
+	fb->info->fbops = &fb->ops;
+	ret = vgfb_set_mode(fb, VGFB_MODE_NORMAL);
+	if (ret < 0) {
+		printk("vgfb_set_mode failed\n");
+		goto failed_after_framebuffer_alloc;
+	}
 	ret = register_framebuffer(fb->info);
 	if (ret) {
 		printk(KERN_INFO "vgfb: register_framebuffer failed (%d)\n",ret);
@@ -102,8 +107,16 @@ static int remove(struct platform_device * dev)
 	struct vgfbm* fb = platform_get_drvdata(dev);
 	if (!fb) return 0;
 	if (fb->info) {
+		if (fb->mode){
+			if (fb->mode->free_screen )
+				fb->mode->free_screen(fb);
+			if( fb->mode->destroy )
+				fb->mode->destroy(fb);
+		}
+		fb->info->fbops = 0;
 		unregister_framebuffer(fb->info);
 		framebuffer_release(fb->info);
+		fb->mode = 0;
 		fb->info = 0;
 	}
 	return 0;
@@ -112,10 +125,38 @@ static int remove(struct platform_device * dev)
 int vgfb_set_mode(struct vgfbm* fb, unsigned mode)
 {
 	const struct vgfb_mode* m;
+	int ret;
 	if (mode >= vgfb_mode_count)
 		return -EINVAL;
 	m = *vgfb_mode[mode];
-	return m->create(fb);
+	if (fb->mode == m)
+		return 0;
+	if (fb->mode) {
+		if (fb->mode->free_screen)
+			fb->mode->free_screen(fb);
+		if (fb->mode->destroy)
+			fb->mode->destroy(fb);
+	}
+	ret = m->create(fb);
+	if (ret < 0){
+		fb->mode = 0;
+		return ret;
+	}
+	if (fb->info->fbops->fb_check_var) {
+		ret = fb->info->fbops->fb_check_var(&fb->info->var, fb->info);
+		if (ret < 0) {
+			printk("check_var failed\n");
+			return ret;
+		}
+	}
+	if (fb->info->fbops->fb_set_par) {
+		ret = fb->info->fbops->fb_set_par(fb->info);
+		if (ret < 0) {
+			printk("set_par failed\n");
+			return ret;
+		}
+	}
+	return 0;
 }
 
 int vgfb_set_resolution(struct vgfbm* fb, unsigned long resolution[2])
@@ -126,22 +167,22 @@ int vgfb_set_resolution(struct vgfbm* fb, unsigned long resolution[2])
 	struct list_head *it, *hit;
 	bool found = false;
 
-	if( resolution[0] == 0 || resolution[1] == 0 )
+	if (resolution[0] == 0 || resolution[1] == 0)
 		return -EINVAL;
 
 	list_for_each_safe (it, hit, &fb->info->modelist) {
 		struct fb_videomode* mode = &list_entry(it, struct fb_modelist, list)->mode;
-		if(mode->xres == resolution[0] && mode->yres == resolution[1]){
+		if (mode->xres == resolution[0] && mode->yres == resolution[1]) {
 			found = true;
 			continue;
 		}
-		if(mode->xres == fb->info->var.xres && mode->xres == fb->info->var.xres)
+		if (mode->xres == fb->info->var.xres && mode->xres == fb->info->var.xres)
 			continue;
 		list_del(it);
 		kfree(it);
 	}
 
-	if( found )
+	if (found)
 		return 0;
 
 	var.xres = resolution[0];
