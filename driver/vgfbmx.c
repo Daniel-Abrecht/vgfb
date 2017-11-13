@@ -15,6 +15,7 @@
 #include <linux/slab.h>
 #include <linux/fs.h>
 #include "vgioctl.h"
+#include "vgfbmx.h"
 #include "vgfb.h"
 
 MODULE_LICENSE("Dual MIT/GPL");
@@ -37,6 +38,29 @@ struct vgfbmx {
 
 static struct vgfbmx vgfbmx;
 
+bool vgfbm_acquire(struct vgfbm* vgfbm){
+	unsigned long val = vgfbm->count + 1;
+	if (!val)
+		return false;
+	vgfbm->count = val;
+	return true;
+}
+
+void vgfbm_release(struct vgfbm* vgfbm){
+	unsigned long val = vgfbm->count;
+	if (!val){
+		printk(KERN_CRIT "underflow; use-after-free\n");
+		dump_stack();
+		return;
+	}
+	val--;
+	vgfbm->count = val;
+	if(val)
+		return;
+	vgfb_free(vgfbm);
+	kfree(vgfbm);
+}
+
 static int vgfbmx_open(struct inode *inode, struct file *file)
 {
 	int ret = 0;
@@ -45,35 +69,33 @@ static int vgfbmx_open(struct inode *inode, struct file *file)
 	printk(KERN_INFO "vgfbmx: device opened\n");
 
 	vgfbm = kzalloc(sizeof(struct vgfbm), GFP_KERNEL);
-	if (!vgfbm) {
-		ret = -ENOMEM;
-		goto failed;
-	}
+	if (!vgfbm) 
+		return -ENOMEM;
+
 	file->private_data = vgfbm;
+	vgfbm_acquire(vgfbm);
 
 	ret = vgfb_create(vgfbm);
-	if (ret)
-		goto failed_after_kzalloc;
+	if (ret < 0) {
+		vgfbm_release(vgfbm);
+		return ret;
+	}
 
 	return 0;
-	failed_after_kzalloc:
-		kfree(vgfbm);
-	failed:
-		return ret;
 }
 
-static int vgfbmx_release(struct inode *inode, struct file *file)
+static int vgfbmx_close(struct inode *inode, struct file *file)
 {
 	struct vgfbm* vgfbm = file->private_data;
 
-	vgfb_destroy(vgfbm);
-	kfree(vgfbm);
+	vgfb_remove(vgfbm);
+	vgfbm_release(vgfbm);
 
 	printk(KERN_INFO "vgfbmx: device closed\n");
 	return 0;
 }
 
-static long ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static long vgfbmx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct vgfbm* vgfbm = file->private_data;
 	if( !vgfbm->info )
@@ -96,8 +118,8 @@ static long ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 struct file_operations vgfbmx_opts = {
 	.owner = THIS_MODULE,
 	.open = vgfbmx_open,
-	.release = vgfbmx_release,
-	.unlocked_ioctl = ioctl
+	.release = vgfbmx_close,
+	.unlocked_ioctl = vgfbmx_ioctl
 };
 
 int __init vgfbmx_init(void)

@@ -5,9 +5,12 @@
  * the GNU General Public License v2.0
  */
 
-#ifndef VG_H
-#define VG_H
+#ifndef VGFBMX_H
+#define VGFBMX_H
 
-#include "vgioctl.h"
+struct vgfbm;
+
+bool vgfbm_acquire(struct vgfbm* vgfbm);
+void vgfbm_release(struct vgfbm* vgfbm);
 
 #endif
