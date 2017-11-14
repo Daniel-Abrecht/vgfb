@@ -71,7 +71,7 @@ bool FBViewer::setFB(const char* path){
   }
   format = QImage::Format::Format_RGBX8888; // TODO
   std::size_t size = var.xres_virtual * var.yres_virtual * 4;
-  unsigned char* mem = (unsigned char*)mmap(0, size, PROT_READ | PROT_WRITE, MAP_SHARED, fb, 0);
+  unsigned char* mem = (unsigned char*)mmap(0, size, PROT_READ, MAP_SHARED, fb, 0);
   if( !mem || mem==MAP_FAILED ){
     std::cerr << "mmap failed: " << strerror(errno) << std::endl;
     return false;

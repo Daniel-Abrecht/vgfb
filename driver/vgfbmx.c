@@ -14,7 +14,6 @@
 #include <linux/cdev.h>
 #include <linux/slab.h>
 #include <linux/fs.h>
-#include "vgioctl.h"
 #include "vgfbmx.h"
 #include "vgfb.h"
 
@@ -61,7 +60,7 @@ void vgfbm_release(struct vgfbm* vgfbm){
 	kfree(vgfbm);
 }
 
-static int vgfbmx_open(struct inode *inode, struct file *file)
+int vgfbmx_open(struct inode *inode, struct file *file)
 {
 	int ret = 0;
 	struct vgfbm* vgfbm;
@@ -84,7 +83,19 @@ static int vgfbmx_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static int vgfbmx_close(struct inode *inode, struct file *file)
+ssize_t vgfbmx_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+{
+	struct vgfbm* vgfbm = file->private_data;
+	return vgfb_read(vgfbm->info,buf,count,ppos);
+}
+
+ssize_t vgfbmx_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
+{
+	struct vgfbm* vgfbm = file->private_data;
+	return vgfb_write(vgfbm->info,buf,count,ppos);
+}
+
+int vgfbmx_close(struct inode *inode, struct file *file)
 {
 	struct vgfbm* vgfbm = file->private_data;
 
@@ -95,31 +106,94 @@ static int vgfbmx_close(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static long vgfbmx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+int vgfbm_get_vscreeninfo_user(const struct vgfbm* vgfbm, struct fb_var_screeninfo __user* var){
+	struct fb_var_screeninfo v;
+	v = vgfbm->info->var;
+	if (copy_to_user(var,&v,sizeof(v)) < 0)
+		return -EFAULT;
+	return 0;
+}
+
+int vgfbm_set_vscreeninfo_user(struct vgfbm* vgfbm, const struct fb_var_screeninfo __user* var){
+	struct fb_var_screeninfo v;
+	int ret;
+
+	if (copy_from_user(&v,var,sizeof(v)) < 0)
+		return -EFAULT;
+	if (v.bits_per_pixel != 32)
+	  return -EINVAL;
+	if (v.xoffset != 0)
+		return -EINVAL;
+	if (v.yoffset > v.yres)
+		return -EINVAL;
+
+	ret = vgfb_set_resolution(vgfbm,(unsigned long[]){v.xres,v.yres});
+	if (ret < 0)
+		return ret;
+
+	ret = vgfb_check_var(&v, vgfbm->info);
+	if (ret < 0)
+		return ret;
+
+	vgfbm->info->var = v;
+
+	vgfb_set_par(vgfbm->info);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+int vgfbm_get_fscreeninfo_user(const struct vgfbm* vgfbm, struct fb_fix_screeninfo __user* fix){
+	struct fb_fix_screeninfo f;
+	f = vgfbm->info->fix;
+	if (copy_to_user(fix,&f,sizeof(f)) < 0)
+		return -EFAULT;
+	return 0;
+}
+
+long vgfbmx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
+	int ret = 0;
+	void __user* argp = (void __user*)arg;
 	struct vgfbm* vgfbm = file->private_data;
-	if( !vgfbm->info )
+
+	if (!lock_fb_info(vgfbm->info))
 		return -ENODEV;
 
 	switch (cmd) {
-
-		case IOCTL_VG_SET_RESOLUTION: {
-			unsigned long resolution[2];
-			if (copy_from_user(resolution, (unsigned long __user*)arg, sizeof(resolution)))
-				return -EACCES;
-			return vgfb_set_resolution(vgfbm,resolution);
-		}
-
+		case FBIOGET_VSCREENINFO: ret = vgfbm_get_vscreeninfo_user(vgfbm,argp); break;
+		case FBIOPUT_VSCREENINFO: ret = vgfbm_set_vscreeninfo_user(vgfbm,argp); break;
+		case FBIOGET_FSCREENINFO: ret = vgfbm_get_fscreeninfo_user(vgfbm,argp); break;
+		case         FBIOPUTCMAP: ret = -EINVAL; break;
+		case         FBIOGETCMAP: ret = -EINVAL; break;
+		case     FBIOPAN_DISPLAY: ret = -EINVAL; break;
+		case         FBIO_CURSOR: ret = -EINVAL; break;
+		case   FBIOGET_CON2FBMAP: ret = -EINVAL; break;
+		case   FBIOPUT_CON2FBMAP: ret = -EINVAL; break;
+		case           FBIOBLANK: ret = -EINVAL; break;
+		default                 : ret = -EINVAL; break;
 	}
 
-	return -EINVAL;
+	unlock_fb_info(vgfbm->info);
+
+	return ret;
+}
+
+int vgfbmx_mmap(struct file *file, struct vm_area_struct *vma)
+{
+	struct vgfbm* vgfbm = file->private_data;
+	return vgfb_mmap(vgfbm->info,vma);
 }
 
 struct file_operations vgfbmx_opts = {
 	.owner = THIS_MODULE,
 	.open = vgfbmx_open,
 	.release = vgfbmx_close,
-	.unlocked_ioctl = vgfbmx_ioctl
+	.unlocked_ioctl = vgfbmx_ioctl,
+	.read = vgfbmx_read,
+	.write = vgfbmx_write,
+	.mmap = vgfbmx_mmap,
 };
 
 int __init vgfbmx_init(void)

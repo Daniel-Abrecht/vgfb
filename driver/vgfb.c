@@ -15,9 +15,11 @@
 #include "vgfbmx.h"
 #include "vgfb.h"
 
+static void vm_open(struct vm_area_struct *vma);
 static void vm_close(struct vm_area_struct *vma);
 
 static const struct vm_operations_struct vm_default_ops = {
+	.open = vm_open,
 	.close = vm_close,
 };
 
@@ -166,7 +168,6 @@ static int remove(struct platform_device * dev)
 	return 0;
 }
 
-
 ssize_t vgfb_read(struct fb_info *info, char __user *buf, size_t count, loff_t *ppos)
 {
 	unsigned long offset = *ppos;
@@ -256,10 +257,15 @@ int vgfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 	return 0;
 }
 
+static void vm_open(struct vm_area_struct *vma)
+{
+	printk(KERN_DEBUG "vgfb: vm_open\n");
+}
+
 static void vm_close(struct vm_area_struct *vma)
 {
 	struct vgfbm* fb = vma->vm_private_data;
-	printk(KERN_DEBUG "vgfb: vgfb_close\n");
+	printk(KERN_DEBUG "vgfb: vm_close\n");
 	vgfb_release_mmap(fb);
 	vgfbm_release(fb);
 }
@@ -323,7 +329,6 @@ int vgfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 	if (fb->next_screen_base) {
 		printk(KERN_INFO "vgfb: screen resolution change in progress\n");
 		ret = -EBUSY;
-		vgfbm_release(fb);
 		goto failed_3;
 	}
 	ret = remap_vmalloc_range(vma, info->screen_base, vma->vm_pgoff);
