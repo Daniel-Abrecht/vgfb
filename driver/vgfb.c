@@ -53,10 +53,13 @@ static const struct fb_var_screeninfo var_screeninfo_defaults = {
 int vgfb_create(struct vgfbm* fb)
 {
 	int ret;
+	mutex_lock(&fb->lock);
 	if( !vgfbm_acquire(fb) ){
+		mutex_unlock(&fb->lock);
 		printk(KERN_ERR "vgfb: vgfbm_acquire failed\n");
 		return -EBUSY;
 	}
+	mutex_unlock(&fb->lock);
 	fb->pdev = platform_device_alloc("vgfb", PLATFORM_DEVID_AUTO);
 	if (!fb->pdev) {
 		printk(KERN_ERR "vgfb: platform_device_alloc failed\n");
@@ -90,13 +93,18 @@ void vgfb_free(struct vgfbm* fb)
 		vfree(fb->screen_base);
 		fb->screen_base = 0;
 	}
+	if (fb->next_screen_base){
+		vfree(fb->next_screen_base);
+		fb->next_screen_base = 0;
+	}
 }
 
 static int probe(struct platform_device * dev)
 {
 	int ret;
 	struct vgfbm* fb = platform_get_drvdata(dev);
-	if( !vgfbm_acquire(fb) ){
+	mutex_lock(&fb->lock);
+	if (!vgfbm_acquire(fb)) {
 		printk(KERN_ERR "vgfb: vgfbm_acquire failed\n");
 		ret = -EBUSY;
 		goto failed;
@@ -134,7 +142,7 @@ static int probe(struct platform_device * dev)
 		printk(KERN_ERR "vgfb: vgfb_check_var failed\n");
 		goto failed_after_framebuffer_alloc;
 	}
-	ret = vgfb_set_par(fb->info);
+	ret = do_vgfb_set_par(fb->info);
 	if (ret < 0) {
 		printk(KERN_ERR "vgfb: vgfb_set_par failed\n");
 		goto failed_after_framebuffer_alloc;
@@ -144,19 +152,24 @@ static int probe(struct platform_device * dev)
 		printk(KERN_ERR "vgfb: register_framebuffer failed (%d)\n",ret);
 		goto failed_after_framebuffer_alloc;
 	}
+	mutex_unlock(&fb->lock);
 	return 0;
 failed_after_framebuffer_alloc:
 	framebuffer_release(fb->info);
 	fb->info = 0;
 failed_after_acquire:
+	mutex_unlock(&fb->lock);
 	vgfbm_release(fb);
+	return ret;
 failed:
+	mutex_unlock(&fb->lock);
 	return ret;
 }
 
 static int remove(struct platform_device * dev)
 {
 	struct vgfbm* fb = platform_get_drvdata(dev);
+	mutex_lock(&fb->lock);
 	if (!fb) return 0;
 	if (fb->info) {
 		fb->info->screen_base = 0;
@@ -164,47 +177,80 @@ static int remove(struct platform_device * dev)
 		unregister_framebuffer(fb->info);
 		fb->info = 0;
 	}
+	mutex_unlock(&fb->lock);
 	vgfbm_release(fb);
 	return 0;
 }
 
 ssize_t vgfb_read(struct fb_info *info, char __user *buf, size_t count, loff_t *ppos)
 {
+	ssize_t ret;
 	unsigned long offset = *ppos;
 	unsigned long mem_len = info->fix.smem_len;
-	if (info->state != FBINFO_STATE_RUNNING)
-		return -EPERM;
-	if (offset > mem_len || !info->screen_base)
-		return -ENOMEM;
-	if (!count)
-		return 0;
+	struct vgfbm* fb = *(struct vgfbm**)info->par;
+	mutex_lock(&fb->lock);
+	if (info->state != FBINFO_STATE_RUNNING) {
+		ret = -EPERM;
+		goto end;
+	}
+	if (offset > mem_len || !info->screen_base) {
+		ret = -ENOMEM;
+		goto end;
+	}
+	if (!count) {
+		ret = 0;
+		goto end;
+	}
 	if (count > mem_len - offset)
 		count = mem_len - offset;
-	if (!count)
-		return -ENOMEM;
-	if (copy_to_user(buf, info->screen_base + offset, count))
-		return -EFAULT;
+	if (!count) {
+		ret = -ENOMEM;
+		goto end;
+	}
+	if (copy_to_user(buf, info->screen_base + offset, count)) {
+		ret = -EFAULT;
+		goto end;
+	}
 	*ppos += count;
-	return count;
+	ret = count;
+end:
+	mutex_unlock(&fb->lock);
+  return ret;
 }
 
 ssize_t vgfb_write(struct fb_info *info, const char __user *buf, size_t count, loff_t *ppos)
 {
+	ssize_t ret = 0;
 	unsigned long offset = *ppos;
 	unsigned long mem_len = info->fix.smem_len;
-	if (info->state != FBINFO_STATE_RUNNING)
-		return -EPERM;
-	if (offset > mem_len || !info->screen_base)
-		return -ENOMEM;
-	if (!count)
-		return 0;
+	struct vgfbm* fb = *(struct vgfbm**)info->par;
+	mutex_lock(&fb->lock);
+	if (info->state != FBINFO_STATE_RUNNING) {
+		ret = -EPERM;
+		goto end;
+	}
+	if (offset > mem_len || !info->screen_base) {
+		ret = -ENOMEM;
+		goto end;
+	}
+	if (!count) {
+		ret = 0;
+		goto end;
+	}
 	if (count > mem_len - offset)
 		count = mem_len - offset;
-	if (!count)
-		return -ENOMEM;
-	if (copy_to_user(info->screen_base + offset, buf, count))
-		return -EFAULT;
+	if (!count) {
+		ret = -ENOMEM;
+		goto end;
+	}
+	if (copy_to_user(info->screen_base + offset, buf, count)) {
+		ret = -EFAULT;
+		goto end;
+	}
 	*ppos += count;
+	ret = count;
+end:
+	mutex_unlock(&fb->lock);
 	return count;
 }
 
@@ -261,8 +307,10 @@ static void vm_open(struct vm_area_struct *vma)
 {
 	struct vgfbm* fb = vma->vm_private_data;
 	printk(KERN_DEBUG "vgfb: vm_open\n");
+	mutex_lock(&fb->lock);
 	if (!vgfb_acquire_mmap(fb))
 		panic("vgfb: vgfb_acquire_mmap failed");
+	mutex_unlock(&fb->lock);
 }
 
 static void vm_close(struct vm_area_struct *vma)
@@ -286,17 +334,23 @@ bool vgfb_acquire_mmap(struct vgfbm* fb)
 
 void vgfb_release_mmap(struct vgfbm* fb)
 {
-	unsigned long val = fb->mem_count;
+	unsigned long val;
+	mutex_lock(&fb->lock);
+	val = fb->mem_count;
 	if (!val){
+		mutex_unlock(&fb->lock);
 		printk(KERN_CRIT "underflow; use-after-free\n");
 		dump_stack();
 		return;
 	}
 	val--;
 	fb->mem_count = val;
-	if(val)
+	if(val) {
+		mutex_unlock(&fb->lock);
 		return;
+	}
 	vgfb_check_switch(fb);
+	mutex_unlock(&fb->lock);
 	vgfbm_release(fb);
 }
 
@@ -320,36 +374,49 @@ bool vgfb_check_switch(struct vgfbm* fb)
 
 int vgfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 {
-	int ret;
+	int ret = 0;
 	struct vgfbm* fb = *(struct vgfbm**)info->par;
+	mutex_lock(&fb->lock);
 	if (!vgfb_acquire_mmap(fb)) {
 		printk(KERN_ERR "vgfb: vgfb_acquire_mmap failed\n");
 		ret = -EBUSY;
-		goto failed;
+		goto end;
 	}
 	if (fb->next_screen_base) {
 		printk(KERN_INFO "vgfb: screen resolution change in progress\n");
 		ret = -EBUSY;
-		goto failed_2;
+		goto failed;
 	}
 	ret = remap_vmalloc_range(vma, info->screen_base, vma->vm_pgoff);
 	if (ret < 0)
-		goto failed_2;
+		goto failed;
 	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP;
 	vma->vm_private_data = fb;
 	vma->vm_ops = &vm_default_ops;
 	printk(KERN_DEBUG "vgfb: vgfb_mmap\n");
-	return 0;
-failed_2:
-	vgfb_release_mmap(fb);
+end:
+	mutex_unlock(&fb->lock);
+	return ret;
 failed:
+	mutex_unlock(&fb->lock);
+	vgfb_release_mmap(fb);
 	return ret;
 }
 
-int vgfb_set_par(struct fb_info *info)
-{
+int vgfb_set_par(struct fb_info *info) {
+	int ret;
 	struct vgfbm* fb = *(struct vgfbm**)info->par;
-	struct fb_videomode* mode = &list_entry(fb->info->modelist.next, struct fb_modelist, list)->mode;
+	mutex_lock(&fb->lock);
+	ret = do_vgfb_set_par(info);
+	mutex_unlock(&fb->lock);
+	return ret;
+}
+
+int do_vgfb_set_par(struct fb_info *info)
+{
+	struct fb_videomode* mode;
+	struct vgfbm* fb = *(struct vgfbm**)info->par;
+	mode = &list_entry(fb->info->modelist.next, struct fb_modelist, list)->mode;
 	if (info->var.xres != mode->xres || info->var.yres != mode->yres){
 		info->var = fb->old_var;
 		return -EINVAL;
@@ -368,7 +435,16 @@ int vgfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue, u_int transp
 	return -EINVAL;
 }
 
-int vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info)
+int vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info) {
+	int ret;
+	struct vgfbm* fb = *(struct vgfbm**)info->par;
+	mutex_lock(&fb->lock);
+	ret = do_vgfb_pan_display(var, info);
+	mutex_unlock(&fb->lock);
+	return ret;
+}
+
+int do_vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info)
 {
 	if( var->xoffset > info->var.xres_virtual - info->var.xres )
 		return -EINVAL;

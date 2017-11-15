@@ -46,17 +46,23 @@ bool vgfbm_acquire(struct vgfbm* vgfbm){
 }
 
 void vgfbm_release(struct vgfbm* vgfbm){
-	unsigned long val = vgfbm->count;
+	unsigned long val;
+	mutex_lock(&vgfbm->lock);
+	val = vgfbm->count;
 	if (!val){
+		mutex_unlock(&vgfbm->lock);
 		printk(KERN_CRIT "underflow; use-after-free\n");
 		dump_stack();
 		return;
 	}
 	val--;
 	vgfbm->count = val;
-	if(val)
+	if (val) {
+		mutex_unlock(&vgfbm->lock);
 		return;
+	}
 	vgfb_free(vgfbm);
+	mutex_unlock(&vgfbm->lock);
 	kfree(vgfbm);
 }
 
@@ -68,8 +74,10 @@ int vgfbmx_open(struct inode *inode, struct file *file)
 	printk(KERN_INFO "vgfbmx: device opened\n");
 
 	vgfbm = kzalloc(sizeof(struct vgfbm), GFP_KERNEL);
-	if (!vgfbm) 
+	if (!vgfbm)
 		return -ENOMEM;
+
+	mutex_init(&vgfbm->lock);
 
 	file->private_data = vgfbm;
 	vgfbm_acquire(vgfbm);
@@ -127,6 +135,7 @@ int vgfbm_set_vscreeninfo_user(struct vgfbm* vgfbm, const struct fb_var_screenin
 	if (v.yoffset > v.yres)
 		return -EINVAL;
 
+	mutex_lock(&vgfbm->lock);
 	ret = vgfb_set_resolution(vgfbm,(unsigned long[]){v.xres,v.yres});
 	if (ret < 0)
 		return ret;
@@ -137,9 +146,9 @@ int vgfbm_set_vscreeninfo_user(struct vgfbm* vgfbm, const struct fb_var_screenin
 
 	vgfbm->info->var = v;
 
-	vgfb_set_par(vgfbm->info);
-	if (ret < 0)
-		return ret;
+	do_vgfb_set_par(vgfbm->info);
+
+	mutex_unlock(&vgfbm->lock);
 
 	return 0;
 }

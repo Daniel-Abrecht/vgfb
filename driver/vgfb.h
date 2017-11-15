@@ -14,6 +14,7 @@
 #define VGFB_REFRESH_RATE 60lu
 
 struct vgfbm {
+	struct mutex lock;
 	unsigned long count;
 	unsigned long mem_count;
 	struct platform_device * pdev;
@@ -31,8 +32,10 @@ int vgfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info);
 int vgfb_realloc_screen(struct vgfbm* fb);
 void vgfb_free_screen(struct vgfbm* fb);
 int vgfb_mmap(struct fb_info *info, struct vm_area_struct *vma);
+int do_vgfb_set_par(struct fb_info *info);
 int vgfb_set_par(struct fb_info *info);
 int vgfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue, u_int transp, struct fb_info *info);
+int do_vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info);
 int vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info);
 
 bool vgfb_acquire_mmap(struct vgfbm* fb);
