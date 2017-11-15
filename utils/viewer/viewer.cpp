@@ -52,40 +52,51 @@ void FBViewer::resizeEvent(QResizeEvent* event){
 }
 
 void FBViewer::update(){
+  if(!checkChanges())
+    return;
   if(!memory_size)
     return;
-  label->setPixmap(QPixmap::fromImage(QImage(memory,var->xres,var->yres,(QImage::Format)format)));
+  size_t offset = var->yoffset * var->xres_virtual * 4;
+  label->setPixmap(QPixmap::fromImage(QImage(memory+offset,var->xres,var->yres,(QImage::Format)format)));
 }
 
-bool FBViewer::setFB(const char* path){
-  int fb = ::open(path,O_RDWR);
-  if( fb == -1 ){
-    std::cerr << "open failed: " << strerror(errno) << std::endl;
-    return false;
-  }
+bool FBViewer::checkChanges(){
   struct fb_var_screeninfo var;
   if( ioctl(fb, FBIOGET_VSCREENINFO, &var) == -1 ){
     std::cerr << "FBIOGET_VSCREENINFO failed: " << strerror(errno) << std::endl;
-    ::close(fb);
     return false;
   }
   format = QImage::Format::Format_RGBX8888; // TODO
   std::size_t size = var.xres_virtual * var.yres_virtual * 4;
-  unsigned char* mem = (unsigned char*)mmap(0, size, PROT_READ, MAP_SHARED, fb, 0);
-  if( !mem || mem==MAP_FAILED ){
-    std::cerr << "mmap failed: " << strerror(errno) << std::endl;
+  if( size != memory_size ){
+    unsigned char* mem = (unsigned char*)mmap(0, size, PROT_READ, MAP_SHARED, fb, 0);
+    if( !mem || mem==MAP_FAILED ){
+      std::cerr << "mmap failed: " << strerror(errno) << std::endl;
+      return false;
+    }
+    if( memory && memory != MAP_FAILED )
+      munmap(memory,memory_size);
+    this->memory = mem;
+    this->memory_size = size;
+  }
+  if( var.xres != this->var->xres || var.yres != this->var->yres ){
+    resize(var.xres,var.yres);
+    label->resize(var.xres,var.yres);
+  }
+  *this->var = var;
+  return true;
+}
+
+bool FBViewer::setFB(const char* path){
+  if(fb)
+    ::close(fb);
+  fb = ::open(path,O_RDWR);
+  if( fb == -1 ){
+    std::cerr << "open failed: " << strerror(errno) << std::endl;
     return false;
   }
-  if( memory && memory != MAP_FAILED )
-    munmap(memory,memory_size);
-  if( this->fb != -1 )
-    ::close(this->fb);
-  this->memory = mem;
-  this->memory_size = size;
-  *this->var = var;
-  this->fb = fb;
-  resize(var.xres,var.yres);
-  label->resize(var.xres,var.yres);
+  if(!checkChanges())
+    return false;
   update();
   return true;
 }

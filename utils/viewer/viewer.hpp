@@ -23,6 +23,7 @@ public:
   explicit FBViewer(QWidget *parent = 0);
   void resizeEvent(QResizeEvent* event);
   bool setFB(const char* path);
+  bool checkChanges();
 public slots:
   void update();
 };
