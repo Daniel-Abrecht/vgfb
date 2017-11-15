@@ -259,7 +259,10 @@ int vgfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 
 static void vm_open(struct vm_area_struct *vma)
 {
+	struct vgfbm* fb = vma->vm_private_data;
 	printk(KERN_DEBUG "vgfb: vm_open\n");
+	if (!vgfb_acquire_mmap(fb))
+		panic("vgfb: vgfb_acquire_mmap failed");
 }
 
 static void vm_close(struct vm_area_struct *vma)
@@ -267,7 +270,6 @@ static void vm_close(struct vm_area_struct *vma)
 	struct vgfbm* fb = vma->vm_private_data;
 	printk(KERN_DEBUG "vgfb: vm_close\n");
 	vgfb_release_mmap(fb);
-	vgfbm_release(fb);
 }
 
 bool vgfb_acquire_mmap(struct vgfbm* fb)
@@ -275,6 +277,9 @@ bool vgfb_acquire_mmap(struct vgfbm* fb)
 	unsigned long val = fb->mem_count + 1;
 	if (!val)
 		return false;
+	if (val == 1)
+		if (!vgfbm_acquire(fb))
+			return false;
 	fb->mem_count = val;
 	return true;
 }
@@ -292,6 +297,7 @@ void vgfb_release_mmap(struct vgfbm* fb)
 	if(val)
 		return;
 	vgfb_check_switch(fb);
+	vgfbm_release(fb);
 }
 
 bool vgfb_check_switch(struct vgfbm* fb)
@@ -316,33 +322,26 @@ int vgfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 {
 	int ret;
 	struct vgfbm* fb = *(struct vgfbm**)info->par;
-	if (!vgfbm_acquire(fb)){
-		printk(KERN_INFO "vgfb: vgfbm_acquire\n");
+	if (!vgfb_acquire_mmap(fb)) {
+		printk(KERN_ERR "vgfb: vgfb_acquire_mmap failed\n");
 		ret = -EBUSY;
 		goto failed;
-	}
-	if (!vgfb_acquire_mmap(fb)) {
-		printk(KERN_INFO "vgfb: vgfb_acquire_mmap\n");
-		ret = -EBUSY;
-		goto failed_2;
 	}
 	if (fb->next_screen_base) {
 		printk(KERN_INFO "vgfb: screen resolution change in progress\n");
 		ret = -EBUSY;
-		goto failed_3;
+		goto failed_2;
 	}
 	ret = remap_vmalloc_range(vma, info->screen_base, vma->vm_pgoff);
 	if (ret < 0)
-		goto failed_3;
+		goto failed_2;
 	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP;
 	vma->vm_private_data = fb;
 	vma->vm_ops = &vm_default_ops;
 	printk(KERN_DEBUG "vgfb: vgfb_mmap\n");
 	return 0;
-failed_3:
-	vgfb_release_mmap(fb);
 failed_2:
-	vgfbm_release(fb);
+	vgfb_release_mmap(fb);
 failed:
 	return ret;
 }
