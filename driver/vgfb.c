@@ -38,7 +38,9 @@ static struct fb_ops fb_default_ops = {
 	.fb_pan_display = vgfb_pan_display,
 };
 
-static struct fb_ops fb_null_ops;
+static struct fb_ops fb_null_ops = {
+	.owner = THIS_MODULE,
+};
 
 static const struct fb_fix_screeninfo fix_screeninfo_defaults = {
 	.id = "vgfb",
@@ -59,7 +61,7 @@ int vgfb_create(struct vgfbm* fb)
 	if( !vgfbm_acquire(fb) ){
 		mutex_unlock(&fb->lock);
 		printk(KERN_ERR "vgfb: vgfbm_acquire failed\n");
-		return -EBUSY;
+		return -ENOMEM;
 	}
 	init_completion(&fb->resize_done);
 	mutex_unlock(&fb->lock);
@@ -109,7 +111,7 @@ static int probe(struct platform_device * dev)
 	mutex_lock(&fb->lock);
 	if (!vgfbm_acquire(fb)) {
 		printk(KERN_ERR "vgfb: vgfbm_acquire failed\n");
-		ret = -EBUSY;
+		ret = -EAGAIN;
 		goto failed;
 	}
 	fb->info = framebuffer_alloc(sizeof(struct vgfbm*),&fb->pdev->dev);
@@ -211,7 +213,7 @@ ssize_t vgfb_read(struct fb_info *info, char __user *buf, size_t count, loff_t *
 	struct vgfbm* fb = *(struct vgfbm**)info->par;
 	mutex_lock(&fb->lock);
 	if (fb->next_screen_base) {
-		ret = -EBUSY;
+		ret = -EAGAIN;
 		goto end;
 	}
 	if (info->state != FBINFO_STATE_RUNNING) {
@@ -251,7 +253,7 @@ ssize_t vgfb_write(struct fb_info *info, const char __user *buf, size_t count, l
 	struct vgfbm* fb = *(struct vgfbm**)info->par;
 	mutex_lock(&fb->lock);
 	if (fb->next_screen_base) {
-		ret = -EBUSY;
+		ret = -EAGAIN;
 		goto end;
 	}
 	if (info->state != FBINFO_STATE_RUNNING) {
@@ -409,12 +411,12 @@ int vgfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 	mutex_lock(&fb->lock);
 	if (!vgfb_acquire_mmap(fb)) {
 		printk(KERN_ERR "vgfb: vgfb_acquire_mmap failed\n");
-		ret = -EBUSY;
+		ret = -EAGAIN;
 		goto end;
 	}
 	if (fb->next_screen_base) {
 		printk(KERN_INFO "vgfb: screen resolution change in progress\n");
-		ret = -EBUSY;
+		ret = -EAGAIN;
 		goto failed;
 	}
 	ret = remap_vmalloc_range(vma, info->screen_base, vma->vm_pgoff);
