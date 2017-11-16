@@ -8,6 +8,8 @@
 #ifndef VGFB_H
 #define VGFB_H
 
+#include <linux/completion.h>
+#include <linux/mutex.h>
 #include <linux/list.h>
 #include <linux/fb.h>
 
@@ -23,9 +25,11 @@ struct vgfbm {
 	struct fb_videomode videomode;
 	int remap_signal;
 	void * screen_base;
+	struct completion resize_done;
 	void * next_screen_base;
 };
 
+int vgfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg);
 ssize_t vgfb_read(struct fb_info *info, char __user *buf, size_t count, loff_t *ppos);
 ssize_t vgfb_write(struct fb_info *info, const char __user *buf, size_t count, loff_t *ppos);
 int vgfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info);

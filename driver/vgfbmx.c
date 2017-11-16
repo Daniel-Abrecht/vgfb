@@ -16,6 +16,7 @@
 #include <linux/fs.h>
 #include "vgfbmx.h"
 #include "vgfb.h"
+#include "vg.h"
 
 MODULE_LICENSE("Dual MIT/GPL");
 MODULE_AUTHOR("Daniel Patrick Abrecht");
@@ -153,6 +154,14 @@ int vgfbm_set_vscreeninfo_user(struct vgfbm* vgfbm, const struct fb_var_screenin
 	return 0;
 }
 
+int vgfbm_pan_display(struct vgfbm* vgfbm, const struct fb_var_screeninfo __user* var){
+	struct fb_var_screeninfo v;
+	if (copy_from_user(&v,var,sizeof(v)) < 0)
+		return -EFAULT;
+	return vgfb_pan_display(&v,vgfbm->info);
+}
+
+
 int vgfbm_get_fscreeninfo_user(const struct vgfbm* vgfbm, struct fb_fix_screeninfo __user* fix){
 	struct fb_fix_screeninfo f;
 	f = vgfbm->info->fix;
@@ -176,12 +185,12 @@ long vgfbmx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		case FBIOGET_FSCREENINFO: ret = vgfbm_get_fscreeninfo_user(vgfbm,argp); break;
 		case         FBIOPUTCMAP: ret = -EINVAL; break;
 		case         FBIOGETCMAP: ret = -EINVAL; break;
-		case     FBIOPAN_DISPLAY: ret = -EINVAL; break;
+		case     FBIOPAN_DISPLAY: ret = vgfbm_pan_display(vgfbm,argp); break;
 		case         FBIO_CURSOR: ret = -EINVAL; break;
 		case   FBIOGET_CON2FBMAP: ret = -EINVAL; break;
 		case   FBIOPUT_CON2FBMAP: ret = -EINVAL; break;
 		case           FBIOBLANK: ret = -EINVAL; break;
-		default                 : ret = -EINVAL; break;
+		default                 : ret = vgfb_ioctl(vgfbm->info,cmd,arg); break;
 	}
 
 	unlock_fb_info(vgfbm->info);

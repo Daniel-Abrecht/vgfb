@@ -14,6 +14,7 @@
 #include <linux/vmalloc.h>
 #include "vgfbmx.h"
 #include "vgfb.h"
+#include "vg.h"
 
 static void vm_open(struct vm_area_struct *vma);
 static void vm_close(struct vm_area_struct *vma);
@@ -27,6 +28,7 @@ static const unsigned long initial_resolution[] = {800,600};
 
 static struct fb_ops fb_default_ops = {
 	.owner = THIS_MODULE,
+	.fb_ioctl = vgfb_ioctl,
 	.fb_read = vgfb_read,
 	.fb_write = vgfb_write,
 	.fb_mmap = vgfb_mmap,
@@ -59,6 +61,7 @@ int vgfb_create(struct vgfbm* fb)
 		printk(KERN_ERR "vgfb: vgfbm_acquire failed\n");
 		return -EBUSY;
 	}
+	init_completion(&fb->resize_done);
 	mutex_unlock(&fb->lock);
 	fb->pdev = platform_device_alloc("vgfb", PLATFORM_DEVID_AUTO);
 	if (!fb->pdev) {
@@ -182,6 +185,24 @@ static int remove(struct platform_device * dev)
 	return 0;
 }
 
+int vgfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
+{
+	int ret = 0;
+	struct vgfbm* fb = *(struct vgfbm**)info->par;
+	switch (cmd) {
+		case IOCTL_WAIT_RESIZE_DONE: {
+			unlock_fb_info(fb->info); // fb_ioctl locked info before calling this function
+			ret = wait_for_completion_interruptible(&fb->resize_done);
+			if (ret < 0)
+				ret = -EINTR;
+			lock_fb_info(fb->info);
+		} break;
+		default: ret = -EINVAL; break;
+	}
+	return ret;
+}
+
+
 ssize_t vgfb_read(struct fb_info *info, char __user *buf, size_t count, loff_t *ppos)
 {
 	ssize_t ret;
@@ -189,6 +210,10 @@ ssize_t vgfb_read(struct fb_info *info, char __user *buf, size_t count, loff_t *
 	unsigned long mem_len = info->fix.smem_len;
 	struct vgfbm* fb = *(struct vgfbm**)info->par;
 	mutex_lock(&fb->lock);
+	if (fb->next_screen_base) {
+		ret = -EBUSY;
+		goto end;
+	}
 	if (info->state != FBINFO_STATE_RUNNING) {
 		ret = -EPERM;
 		goto end;
@@ -225,6 +250,10 @@ ssize_t vgfb_write(struct fb_info *info, const char __user *buf, size_t count, l
 	unsigned long mem_len = info->fix.smem_len;
 	struct vgfbm* fb = *(struct vgfbm**)info->par;
 	mutex_lock(&fb->lock);
+	if (fb->next_screen_base) {
+		ret = -EBUSY;
+		goto end;
+	}
 	if (info->state != FBINFO_STATE_RUNNING) {
 		ret = -EPERM;
 		goto end;
@@ -369,6 +398,7 @@ bool vgfb_check_switch(struct vgfbm* fb)
 	fb->info->fix.smem_start = 0;
 	fb->info->fix.smem_len = fb->info->var.xres_virtual * fb->info->var.yres_virtual * 4;
 	fb->info->fix.line_length = fb->info->var.xres_virtual * 4;
+	complete_all(&fb->resize_done);
 	return true;
 }
 
@@ -486,6 +516,9 @@ int vgfb_set_resolution(struct vgfbm* fb, const unsigned long resolution[2])
 	mem = vmalloc_32_user(size_aligned);
 	if (!mem)
 		return -ENOMEM;
+
+	reinit_completion(&fb->resize_done);
+
 	if (fb->next_screen_base)
 		vfree(fb->next_screen_base);
 	fb->next_screen_base = mem;

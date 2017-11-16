@@ -1,6 +1,6 @@
 TEMPLATE = app
 TARGET = viewer
-INCLUDEPATH += .
+INCLUDEPATH += . ../../driver/
 QT += widgets
 
 # Input

@@ -6,6 +6,7 @@
  */
 
 #include <linux/fb.h>
+#include <vg.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
@@ -78,6 +79,7 @@ bool FBViewer::checkChanges(){
     if( memory && memory != MAP_FAILED )
       munmap(memory,memory_size);
     memory_size = 0;
+    while( ioctl(fb, IOCTL_WAIT_RESIZE_DONE) == -1 && errno == EINTR );
     memory = (unsigned char*)mmap(0, size, PROT_READ, MAP_SHARED, fb, 0);
     if( !memory || memory==MAP_FAILED ){
       std::cerr << "mmap failed: " << strerror(errno) << std::endl;
