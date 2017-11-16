@@ -48,6 +48,12 @@ void FBViewer::resizeEvent(QResizeEvent* event){
     scroll_area->setHorizontalScrollBarPolicy( Qt::ScrollBarAlwaysOff );
     scroll_area->setVerticalScrollBarPolicy( Qt::ScrollBarAlwaysOff );
   }
+  if( var->xres != (unsigned long)ws.width() || var->yres != (unsigned long)ws.height() ){
+    struct fb_var_screeninfo v = *var;
+    v.xres = ws.width();
+    v.yres = ws.height();
+    ioctl(fb, FBIOPUT_VSCREENINFO, &v);
+  }
   update();
 }
 
@@ -69,15 +75,15 @@ bool FBViewer::checkChanges(){
   format = QImage::Format::Format_RGBX8888; // TODO
   std::size_t size = var.xres_virtual * var.yres_virtual * 4;
   if( size != memory_size ){
-    unsigned char* mem = (unsigned char*)mmap(0, size, PROT_READ, MAP_SHARED, fb, 0);
-    if( !mem || mem==MAP_FAILED ){
+    if( memory && memory != MAP_FAILED )
+      munmap(memory,memory_size);
+    memory_size = 0;
+    memory = (unsigned char*)mmap(0, size, PROT_READ, MAP_SHARED, fb, 0);
+    if( !memory || memory==MAP_FAILED ){
       std::cerr << "mmap failed: " << strerror(errno) << std::endl;
       return false;
     }
-    if( memory && memory != MAP_FAILED )
-      munmap(memory,memory_size);
-    this->memory = mem;
-    this->memory_size = size;
+    memory_size = size;
   }
   if( var.xres != this->var->xres || var.yres != this->var->yres ){
     resize(var.xres,var.yres);
