@@ -79,6 +79,7 @@ int vgfbmx_open(struct inode *inode, struct file *file)
 		return -ENOMEM;
 
 	mutex_init(&vgfbm->lock);
+	mutex_init(&vgfbm->info_lock);
 
 	file->private_data = vgfbm;
 	vgfbm_acquire(vgfbm);
