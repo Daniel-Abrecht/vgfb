@@ -108,6 +108,8 @@ static int probe(struct platform_device * dev)
 {
 	int ret;
 	struct vgfbm* fb = platform_get_drvdata(dev);
+	if (!fb)
+		return -EINVAL;
 	mutex_lock(&fb->lock);
 	mutex_lock(&fb->info_lock);
 	if (!vgfbm_acquire(fb)) {
