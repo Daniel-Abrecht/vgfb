@@ -20,10 +20,11 @@ struct vgfbm {
 	unsigned long count;
 	unsigned long mem_count;
 	struct platform_device * pdev;
+	struct mutex info_lock;
 	struct fb_info * info;
 	struct fb_var_screeninfo old_var;
 	struct fb_videomode videomode;
-	int remap_signal;
+	int signal;
 	void * screen_base;
 	struct completion resize_done;
 	void * next_screen_base;

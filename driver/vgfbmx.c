@@ -94,14 +94,30 @@ int vgfbmx_open(struct inode *inode, struct file *file)
 
 ssize_t vgfbmx_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 {
+	int ret;
 	struct vgfbm* vgfbm = file->private_data;
-	return vgfb_read(vgfbm->info,buf,count,ppos);
+	mutex_lock(&vgfbm->info_lock);
+	if (!vgfbm->info) {
+		mutex_unlock(&vgfbm->info_lock);
+		return -ENODEV;
+	}
+	ret = vgfb_read(vgfbm->info,buf,count,ppos);
+	mutex_unlock(&vgfbm->info_lock);
+	return ret;
 }
 
 ssize_t vgfbmx_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 {
+	ssize_t ret;
 	struct vgfbm* vgfbm = file->private_data;
-	return vgfb_write(vgfbm->info,buf,count,ppos);
+	mutex_lock(&vgfbm->info_lock);
+	if (!vgfbm->info) {
+		mutex_unlock(&vgfbm->info_lock);
+		return -ENODEV;
+	}
+	ret = vgfb_write(vgfbm->info,buf,count,ppos);
+	mutex_unlock(&vgfbm->info_lock);
+	return ret;
 }
 
 int vgfbmx_close(struct inode *inode, struct file *file)
@@ -123,34 +139,46 @@ int vgfbm_get_vscreeninfo_user(const struct vgfbm* vgfbm, struct fb_var_screenin
 	return 0;
 }
 
-int vgfbm_set_vscreeninfo_user(struct vgfbm* vgfbm, const struct fb_var_screeninfo __user* var){
+int vgfbm_set_vscreeninfo_user(struct vgfbm* vgfbm, const struct fb_var_screeninfo __user* var) {
 	struct fb_var_screeninfo v;
 	int ret;
 
-	if (copy_from_user(&v,var,sizeof(v)) < 0)
-		return -EFAULT;
-	if (v.bits_per_pixel != 32)
-	  return -EINVAL;
-	if (v.xoffset != 0)
-		return -EINVAL;
-	if (v.yoffset > v.yres)
-		return -EINVAL;
-
 	mutex_lock(&vgfbm->lock);
+
+	if (copy_from_user(&v,var,sizeof(v)) < 0) {
+		ret = -EFAULT;
+		goto end;
+	}
+
+	if (v.bits_per_pixel != 32) {
+	  ret = -EINVAL;
+		goto end;
+	}
+
+	if (v.xoffset != 0) {
+		ret = -EINVAL;
+		goto end;
+	}
+
+	if (v.yoffset > v.yres) {
+		ret = -EINVAL;
+		goto end;
+	}
+
 	ret = vgfb_set_resolution(vgfbm,(unsigned long[]){v.xres,v.yres});
 	if (ret < 0)
-		return ret;
+		goto end;
 
 	ret = vgfb_check_var(&v, vgfbm->info);
 	if (ret < 0)
-		return ret;
+		goto end;
 
 	vgfbm->info->var = v;
 
 	do_vgfb_set_par(vgfbm->info);
 
+end:
 	mutex_unlock(&vgfbm->lock);
-
 	return 0;
 }
 
@@ -176,8 +204,11 @@ long vgfbmx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	void __user* argp = (void __user*)arg;
 	struct vgfbm* vgfbm = file->private_data;
 
-	if (!lock_fb_info(vgfbm->info))
+	mutex_lock(&vgfbm->info_lock);
+	if (!vgfbm->info || !lock_fb_info(vgfbm->info)) {
+		mutex_unlock(&vgfbm->info_lock);
 		return -ENODEV;
+	}
 
 	switch (cmd) {
 		case FBIOGET_VSCREENINFO: ret = vgfbm_get_vscreeninfo_user(vgfbm,argp); break;
@@ -194,6 +225,7 @@ long vgfbmx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	}
 
 	unlock_fb_info(vgfbm->info);
+	mutex_unlock(&vgfbm->info_lock);
 
 	return ret;
 }

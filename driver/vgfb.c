@@ -77,7 +77,7 @@ int vgfb_create(struct vgfbm* fb)
 		printk(KERN_ERR "vgfb: platform_device_add failed\n");
 		goto failed_after_platform_device_alloc;
 	}
-	fb->remap_signal = SIGHUP;
+	fb->signal = SIGHUP;
 	return 0;
 failed_after_platform_device_alloc:
 	platform_device_unregister(fb->pdev);
@@ -109,6 +109,7 @@ static int probe(struct platform_device * dev)
 	int ret;
 	struct vgfbm* fb = platform_get_drvdata(dev);
 	mutex_lock(&fb->lock);
+	mutex_lock(&fb->info_lock);
 	if (!vgfbm_acquire(fb)) {
 		printk(KERN_ERR "vgfb: vgfbm_acquire failed\n");
 		ret = -EAGAIN;
@@ -157,16 +158,19 @@ static int probe(struct platform_device * dev)
 		printk(KERN_ERR "vgfb: register_framebuffer failed (%d)\n",ret);
 		goto failed_after_framebuffer_alloc;
 	}
+	mutex_unlock(&fb->info_lock);
 	mutex_unlock(&fb->lock);
 	return 0;
 failed_after_framebuffer_alloc:
 	framebuffer_release(fb->info);
 	fb->info = 0;
 failed_after_acquire:
+	mutex_unlock(&fb->info_lock);
 	mutex_unlock(&fb->lock);
 	vgfbm_release(fb);
 	return ret;
 failed:
+	mutex_unlock(&fb->info_lock);
 	mutex_unlock(&fb->lock);
 	return ret;
 }
@@ -175,6 +179,7 @@ static int remove(struct platform_device * dev)
 {
 	struct vgfbm* fb = platform_get_drvdata(dev);
 	mutex_lock(&fb->lock);
+	mutex_lock(&fb->info_lock);
 	if (!fb) return 0;
 	if (fb->info) {
 		fb->info->screen_base = 0;
@@ -182,6 +187,7 @@ static int remove(struct platform_device * dev)
 		unregister_framebuffer(fb->info);
 		fb->info = 0;
 	}
+	mutex_unlock(&fb->info_lock);
 	mutex_unlock(&fb->lock);
 	vgfbm_release(fb);
 	return 0;
