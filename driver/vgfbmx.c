@@ -134,7 +134,7 @@ int vgfbmx_close(struct inode *inode, struct file *file)
 int vgfbm_get_vscreeninfo_user(const struct vgfbm* vgfbm, struct fb_var_screeninfo __user* var){
 	struct fb_var_screeninfo v;
 	v = vgfbm->info->var;
-	if (copy_to_user(var,&v,sizeof(v)) < 0)
+	if (copy_to_user(var,&v,sizeof(v)))
 		return -EFAULT;
 	return 0;
 }
@@ -145,7 +145,7 @@ int vgfbm_set_vscreeninfo_user(struct vgfbm* vgfbm, const struct fb_var_screenin
 
 	mutex_lock(&vgfbm->lock);
 
-	if (copy_from_user(&v,var,sizeof(v)) < 0) {
+	if (copy_from_user(&v,var,sizeof(v))) {
 		ret = -EFAULT;
 		goto end;
 	}
@@ -184,7 +184,7 @@ end:
 
 int vgfbm_pan_display(struct vgfbm* vgfbm, const struct fb_var_screeninfo __user* var){
 	struct fb_var_screeninfo v;
-	if (copy_from_user(&v,var,sizeof(v)) < 0)
+	if (copy_from_user(&v,var,sizeof(v)))
 		return -EFAULT;
 	return vgfb_pan_display(&v,vgfbm->info);
 }
@@ -193,7 +193,7 @@ int vgfbm_pan_display(struct vgfbm* vgfbm, const struct fb_var_screeninfo __user
 int vgfbm_get_fscreeninfo_user(const struct vgfbm* vgfbm, struct fb_fix_screeninfo __user* fix){
 	struct fb_fix_screeninfo f;
 	f = vgfbm->info->fix;
-	if (copy_to_user(fix,&f,sizeof(f)) < 0)
+	if (copy_to_user(fix,&f,sizeof(f)))
 		return -EFAULT;
 	return 0;
 }
