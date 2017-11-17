@@ -5,6 +5,7 @@
  * the GNU General Public License v2.0
  */
 
+#include <errno.h>
 #include <linux/fb.h>
 #include <vg.h>
 #include <sys/types.h>
@@ -19,6 +20,7 @@
 #include <QScrollBar>
 #include <QLabel>
 #include <QPixmap>
+#include <QImage>
 #include <QTimer>
 #include <viewer.hpp>
 
@@ -73,7 +75,7 @@ bool FBViewer::checkChanges(){
     std::cerr << "FBIOGET_VSCREENINFO failed: " << strerror(errno) << std::endl;
     return false;
   }
-  format = QImage::Format::Format_RGBX8888; // TODO
+  format = QImage::Format_RGBX8888; // TODO
   std::size_t size = var.xres_virtual * var.yres_virtual * 4;
   if( size != memory_size ){
     if( memory && memory != MAP_FAILED )
