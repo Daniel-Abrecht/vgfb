@@ -282,7 +282,7 @@ ssize_t vgfb_write(struct fb_info *info, const char __user *buf, size_t count, l
 		ret = -ENOMEM;
 		goto end;
 	}
-	if (copy_to_user(info->screen_base + offset, buf, count)) {
+	if (copy_from_user(info->screen_base + offset, buf, count)) {
 		ret = -EFAULT;
 		goto end;
 	}
@@ -290,7 +290,7 @@ ssize_t vgfb_write(struct fb_info *info, const char __user *buf, size_t count, l
 	ret = count;
 end:
 	mutex_unlock(&fb->lock);
-	return count;
+	return ret;
 }
 
 int vgfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
