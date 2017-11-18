@@ -200,7 +200,7 @@ int vgfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 	int ret = 0;
 	struct vgfbm* fb = *(struct vgfbm**)info->par;
 	switch (cmd) {
-		case IOCTL_WAIT_RESIZE_DONE: {
+		case VGFB_WAIT_RESIZE_DONE: {
 			unlock_fb_info(fb->info); // fb_ioctl locked info before calling this function
 			ret = wait_for_completion_interruptible(&fb->resize_done);
 			if (ret < 0)

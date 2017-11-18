@@ -81,7 +81,7 @@ bool FBViewer::checkChanges(){
     if( memory && memory != MAP_FAILED )
       munmap(memory,memory_size);
     memory_size = 0;
-    while( ioctl(fb, IOCTL_WAIT_RESIZE_DONE) == -1 && errno == EINTR );
+    while( ioctl(fb, VGFB_WAIT_RESIZE_DONE) == -1 && errno == EINTR );
     memory = (unsigned char*)mmap(0, size, PROT_READ, MAP_SHARED, fb, 0);
     if( !memory || memory==MAP_FAILED ){
       std::cerr << "mmap failed: " << strerror(errno) << std::endl;
@@ -104,6 +104,11 @@ bool FBViewer::setFB(const char* path){
   if( fb == -1 ){
     std::cerr << "open failed: " << strerror(errno) << std::endl;
     return false;
+  }
+  {
+    int fb_minor;
+    if( ioctl(fb, VGFBM_GET_FB_MINOR, &fb_minor) != -1 )
+      std::cout << "Other framebuffer is /dev/fb" << fb_minor << std::endl;
   }
   if(!checkChanges())
     return false;

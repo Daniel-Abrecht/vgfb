@@ -222,6 +222,10 @@ long vgfbmx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		case   FBIOGET_CON2FBMAP: ret = -EINVAL; break;
 		case   FBIOPUT_CON2FBMAP: ret = -EINVAL; break;
 		case           FBIOBLANK: ret = -EINVAL; break;
+		case  VGFBM_GET_FB_MINOR: {
+			int minor = vgfbm->info->node;
+			ret = copy_to_user(argp,&minor,sizeof(int)) ? -EFAULT : 0; break;
+		}
 		default                 : ret = vgfb_ioctl(vgfbm->info,cmd,arg); break;
 	}
 
