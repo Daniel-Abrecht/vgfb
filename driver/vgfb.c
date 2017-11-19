@@ -5,6 +5,7 @@
  * the GNU General Public License v2.0
  */
 
+#include <linux/console.h>
 #include <linux/platform_device.h>
 #include <linux/fb.h>
 #include <linux/mm.h>
@@ -36,7 +37,111 @@ static struct fb_ops fb_default_ops = {
 	.fb_check_var = vgfb_check_var,
 	.fb_setcolreg = vgfb_setcolreg,
 	.fb_pan_display = vgfb_pan_display,
+	.fb_fillrect = vgfb_fillrect,
+	.fb_copyarea = vgfb_copyarea,
+	.fb_imageblit = sys_imageblit,
 };
+
+int vgfb_setcolreg(u_int regno, u_int r, u_int g, u_int b,
+		 u_int a, struct fb_info *info)
+{
+	if (regno >= 256)
+		return -EINVAL;
+	((u32 *)info->pseudo_palette)[regno] =
+		(r&0xFF) | ((g&0xFF)<<8) | ((b&0xFF)<<16) | ((a&0xFF)<<24);
+	return 0;
+}
+
+void vgfb_fillrect(struct fb_info *info, const struct fb_fillrect *r)
+{
+	u32 *mem;
+	u32 i, w, h, d;
+
+	if (info->state != FBINFO_STATE_RUNNING)
+		return;
+
+	h = r->height;
+	w = r->width;
+
+	if (!w || !h)
+		return;
+
+	if (r->dx >= info->var.xres_virtual || r->dy >= info->var.yres_virtual)
+		return;
+
+	if (w > info->var.xres_virtual - r->dx)
+		w = info->var.xres_virtual - r->dx;
+
+	if (h > info->var.yres_virtual - r->dy)
+		h = info->var.yres_virtual - r->dy;
+
+	d = info->var.xres_virtual - w;
+	mem = (u32 *)info->screen_base
+		+ (r->dy * info->var.xres_virtual + r->dx);
+
+	switch (r->rop) {
+	case ROP_COPY:
+		while (h--) {
+			i = w;
+			while (i--)
+				(*mem++) = r->color;
+			mem += d;
+		}
+		break;
+	case ROP_XOR:
+		while (h--) {
+			i = w;
+			while (i--)
+				(*mem++) ^= r->color;
+			mem += d;
+		}
+		break;
+	}
+
+}
+
+void vgfb_copyarea(struct fb_info *info, const struct fb_copyarea *r)
+{
+	u32 *src, *dst;
+	u32 w, h, d;
+
+	if (info->state != FBINFO_STATE_RUNNING)
+		return;
+
+	h = r->height;
+	w = r->width;
+
+	if (!w || !h)
+		return;
+
+	if (r->dx >= info->var.xres_virtual || r->dy >= info->var.yres_virtual)
+		return;
+
+	if (w > info->var.xres_virtual - r->dx)
+		w = info->var.xres_virtual - r->dx;
+
+	if (h > info->var.yres_virtual - r->dy)
+		h = info->var.yres_virtual - r->dy;
+
+	if (w > info->var.xres_virtual - r->sx)
+		w = info->var.xres_virtual - r->sx;
+
+	if (h > info->var.yres_virtual - r->sy)
+		h = info->var.yres_virtual - r->sy;
+
+	d = info->var.xres_virtual - w;
+	src = (u32 *)info->screen_base
+		+ (r->sy * info->var.xres_virtual + r->sx);
+	dst = (u32 *)info->screen_base
+		+ (r->dy * info->var.xres_virtual + r->dx);
+
+	while (h--) {
+		memcpy(dst, src, w*4);
+		src += d;
+		dst += d;
+	}
+
+}
 
 static struct fb_ops fb_null_ops = {
 	.owner = THIS_MODULE,
@@ -45,7 +150,7 @@ static struct fb_ops fb_null_ops = {
 static const struct fb_fix_screeninfo fix_screeninfo_defaults = {
 	.id = "vgfb",
 	.type = FB_TYPE_PACKED_PIXELS, // FB_TYPE_FOURCC
-	.visual = FB_VISUAL_TRUECOLOR, // FB_VISUAL_FOURCC
+	.visual = FB_VISUAL_TRUECOLOR, //FB_VISUAL_DIRECTCOLOR, FB_VISUAL_FOURCC
 //	.capabilities = FB_CAP_FOURCC,
 	.accel = FB_ACCEL_NONE,
 };
@@ -142,6 +247,7 @@ static int probe(struct platform_device *dev)
 	}
 	fb->info->mode = &fb->videomode;
 	fb->info->fbops = &fb_default_ops;
+	fb->info->pseudo_palette = fb->colormap;
 	ret = vgfb_set_resolution(fb, initial_resolution);
 	if (ret < 0) {
 		pr_err("vgfb: vgfb_set_resolution failed\n");
@@ -159,15 +265,22 @@ static int probe(struct platform_device *dev)
 		pr_err("vgfb: vgfb_set_par failed\n");
 		goto failed_after_framebuffer_alloc;
 	}
-	ret = register_framebuffer(fb->info);
-	if (ret) {
-		pr_err("vgfb: register_framebuffer failed (%d)\n", ret);
+	ret = fb_alloc_cmap(&fb->info->cmap, 256, 0);
+	if (ret < 0) {
+		pr_err("vgfb: fb_alloc_cmap failed (%d)\n", ret);
 		goto failed_after_framebuffer_alloc;
+	}
+	ret = register_framebuffer(fb->info);
+	if (ret < 0) {
+		pr_err("vgfb: register_framebuffer failed (%d)\n", ret);
+		goto failed_after_alloc_cmap;
 	}
 	mutex_unlock(&fb->info_lock);
 	mutex_unlock(&fb->lock);
 	return 0;
 
+failed_after_alloc_cmap:
+	fb_dealloc_cmap(&fb->info->cmap);
 failed_after_framebuffer_alloc:
 	framebuffer_release(fb->info);
 	fb->info = 0;
@@ -194,6 +307,7 @@ static int remove(struct platform_device *dev)
 	if (fb->info) {
 		fb->info->screen_base = 0;
 		fb->info->fbops = &fb_null_ops;
+		fb_dealloc_cmap(&fb->info->cmap);
 		unregister_framebuffer(fb->info);
 		fb->info = 0;
 	}
@@ -208,6 +322,9 @@ int vgfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 {
 	int ret = 0;
 	struct vgfbm *fb = *(struct vgfbm **)info->par;
+
+	if (info->state != FBINFO_STATE_RUNNING)
+		return -EPERM;
 
 	switch (cmd) {
 	case VGFB_WAIT_RESIZE_DONE:
@@ -234,6 +351,9 @@ ssize_t vgfb_read(struct fb_info *info, char __user *buf, size_t count,
 	unsigned long offset = *ppos;
 	unsigned long mem_len = info->fix.smem_len;
 	struct vgfbm *fb = *(struct vgfbm **)info->par;
+
+	if (info->state != FBINFO_STATE_RUNNING)
+		return -EPERM;
 
 	mutex_lock(&fb->lock);
 	if (fb->next_screen_base) {
@@ -277,6 +397,9 @@ ssize_t vgfb_write(struct fb_info *info, const char __user *buf, size_t count,
 	unsigned long offset = *ppos;
 	unsigned long mem_len = info->fix.smem_len;
 	struct vgfbm *fb = *(struct vgfbm **)info->par;
+
+	if (info->state != FBINFO_STATE_RUNNING)
+		return -EPERM;
 
 	mutex_lock(&fb->lock);
 	if (fb->next_screen_base) {
@@ -413,13 +536,17 @@ void vgfb_release_mmap(struct vgfbm *fb)
 		mutex_unlock(&fb->lock);
 		return;
 	}
+	console_lock();
 	vgfb_check_switch(fb);
+	console_unlock();
 	mutex_unlock(&fb->lock);
 	vgfbm_release(fb);
 }
 
 bool vgfb_check_switch(struct vgfbm *fb)
 {
+	struct fb_event event;
+
 	if (fb->mem_count)
 		return false;
 	if (!fb->next_screen_base)
@@ -436,6 +563,12 @@ bool vgfb_check_switch(struct vgfbm *fb)
 				* fb->info->var.yres_virtual * 4;
 	fb->info->fix.line_length = fb->info->var.xres_virtual * 4;
 	complete_all(&fb->resize_done);
+
+	event.info = fb->info;
+	event.data = &fb->videomode;
+
+	fb_notifier_call_chain(FB_EVENT_MODE_CHANGE_ALL, &event);
+
 	return true;
 }
 
@@ -443,6 +576,9 @@ int vgfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 {
 	int ret = 0;
 	struct vgfbm *fb = *(struct vgfbm **)info->par;
+
+	if (info->state != FBINFO_STATE_RUNNING)
+		return -EPERM;
 
 	mutex_lock(&fb->lock);
 	if (!vgfb_acquire_mmap(fb)) {
@@ -488,6 +624,9 @@ int do_vgfb_set_par(struct fb_info *info)
 	struct fb_videomode *mode;
 	struct vgfbm *fb = *(struct vgfbm **)info->par;
 
+	if (info->state != FBINFO_STATE_RUNNING)
+		return -EPERM;
+
 	mode = &list_entry(fb->info->modelist.next, struct fb_modelist, list)
 		->mode;
 	if (info->var.xres != mode->xres || info->var.yres != mode->yres) {
@@ -504,12 +643,6 @@ int do_vgfb_set_par(struct fb_info *info)
 	return 0;
 }
 
-int vgfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
-	u_int transp, struct fb_info *info)
-{
-	return -EINVAL;
-}
-
 int vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info)
 {
 	int ret;
@@ -524,6 +657,8 @@ int vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info)
 
 int do_vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info)
 {
+	if (info->state != FBINFO_STATE_RUNNING)
+		return -EPERM;
 	if (var->xoffset > info->var.xres_virtual - info->var.xres)
 		return -EINVAL;
 	if (var->yoffset > info->var.yres_virtual - info->var.yres)

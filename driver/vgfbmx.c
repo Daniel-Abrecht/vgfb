@@ -5,6 +5,7 @@
  * the GNU General Public License v2.0
  */
 
+#include <linux/console.h>
 #include <linux/init.h>
 #include <linux/uaccess.h>
 #include <linux/module.h>
@@ -176,18 +177,20 @@ int vgfbm_set_vscreeninfo_user(struct vgfbm *vgfbm,
 		goto end;
 	}
 
+	console_lock();
 	ret = vgfb_set_resolution(vgfbm, (unsigned long[]){v.xres, v.yres});
 	if (ret < 0)
-		goto end;
+		goto end_cu;
 
 	ret = vgfb_check_var(&v, vgfbm->info);
 	if (ret < 0)
-		goto end;
+		goto end_cu;
 
 	vgfbm->info->var = v;
-
 	do_vgfb_set_par(vgfbm->info);
 
+end_cu:
+	console_unlock();
 end:
 	mutex_unlock(&vgfbm->lock);
 	return 0;
@@ -245,7 +248,9 @@ long vgfbmx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		ret = -EINVAL;
 		break;
 	case FBIOPAN_DISPLAY:
+		console_lock();
 		ret = vgfbm_pan_display(vgfbm, argp);
+		console_unlock();
 		break;
 	case FBIO_CURSOR:
 		ret = -EINVAL;
@@ -257,7 +262,7 @@ long vgfbmx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		ret = -EINVAL;
 		break;
 	case FBIOBLANK:
-		ret = -EINVAL;
+		ret = 0;
 		break;
 	case VGFBM_GET_FB_MINOR:
 		tmp = vgfbm->info->node;

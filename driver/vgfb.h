@@ -28,6 +28,7 @@ struct vgfbm {
 	struct completion resize_done;
 	void *screen_base;
 	void *next_screen_base;
+	u32 colormap[256];
 };
 
 int vgfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg);
@@ -45,6 +46,11 @@ int vgfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 	u_int transp, struct fb_info *info);
 int do_vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info);
 int vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info);
+void vgfb_fillrect(struct fb_info *info, const struct fb_fillrect *rect);
+void vgfb_copyarea(struct fb_info *info, const struct fb_copyarea *region);
+void vgfb_imageblit(struct fb_info *info, const struct fb_image *image);
+int vfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
+		 u_int transp, struct fb_info *info);
 
 bool vgfb_acquire_mmap(struct vgfbm *fb);
 void vgfb_release_mmap(struct vgfbm *fb);
