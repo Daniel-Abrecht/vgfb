@@ -40,7 +40,14 @@ static struct fb_ops fb_default_ops = {
 	.fb_fillrect = vgfb_fillrect,
 	.fb_copyarea = vgfb_copyarea,
 	.fb_imageblit = sys_imageblit,
+	.fb_destroy = vgfb_fb_destroy,
 };
+
+void vgfb_fb_destroy(struct fb_info *info)
+{
+	pr_debug("vgfb: freeing framebuffer info\n");
+	framebuffer_release(info);
+}
 
 int vgfb_setcolreg(u_int regno, u_int r, u_int g, u_int b,
 		 u_int a, struct fb_info *info)
@@ -136,16 +143,12 @@ void vgfb_copyarea(struct fb_info *info, const struct fb_copyarea *r)
 		+ (r->dy * info->var.xres_virtual + r->dx);
 
 	while (h--) {
-		memcpy(dst, src, w*4);
+		memmove(dst, src, w*4);
 		src += d;
 		dst += d;
 	}
 
 }
-
-static struct fb_ops fb_null_ops = {
-	.owner = THIS_MODULE,
-};
 
 static const struct fb_fix_screeninfo fix_screeninfo_defaults = {
 	.id = "vgfb",
@@ -306,7 +309,7 @@ static int remove(struct platform_device *dev)
 		return 0;
 	if (fb->info) {
 		fb->info->screen_base = 0;
-		fb->info->fbops = &fb_null_ops;
+		fb->info->state = FBINFO_STATE_SUSPENDED;
 		fb_dealloc_cmap(&fb->info->cmap);
 		unregister_framebuffer(fb->info);
 		fb->info = 0;
@@ -323,12 +326,9 @@ int vgfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 	int ret = 0;
 	struct vgfbm *fb = *(struct vgfbm **)info->par;
 
-	if (info->state != FBINFO_STATE_RUNNING)
-		return -EPERM;
-
 	switch (cmd) {
 	case VGFB_WAIT_RESIZE_DONE:
-		 // fb_ioctl locked info before calling this function
+		// fb_ioctl locked info before calling this function
 		unlock_fb_info(fb->info);
 		ret = wait_for_completion_interruptible(&fb->resize_done);
 		if (ret < 0)
@@ -351,9 +351,6 @@ ssize_t vgfb_read(struct fb_info *info, char __user *buf, size_t count,
 	unsigned long offset = *ppos;
 	unsigned long mem_len = info->fix.smem_len;
 	struct vgfbm *fb = *(struct vgfbm **)info->par;
-
-	if (info->state != FBINFO_STATE_RUNNING)
-		return -EPERM;
 
 	mutex_lock(&fb->lock);
 	if (fb->next_screen_base) {
@@ -397,9 +394,6 @@ ssize_t vgfb_write(struct fb_info *info, const char __user *buf, size_t count,
 	unsigned long offset = *ppos;
 	unsigned long mem_len = info->fix.smem_len;
 	struct vgfbm *fb = *(struct vgfbm **)info->par;
-
-	if (info->state != FBINFO_STATE_RUNNING)
-		return -EPERM;
 
 	mutex_lock(&fb->lock);
 	if (fb->next_screen_base) {
@@ -520,6 +514,7 @@ bool vgfb_acquire_mmap(struct vgfbm *fb)
 
 void vgfb_release_mmap(struct vgfbm *fb)
 {
+	struct fb_info *info;
 	unsigned long val;
 
 	mutex_lock(&fb->lock);
@@ -532,14 +527,22 @@ void vgfb_release_mmap(struct vgfbm *fb)
 	}
 	val--;
 	fb->mem_count = val;
-	if (val) {
-		mutex_unlock(&fb->lock);
-		return;
-	}
-	console_lock();
-	vgfb_check_switch(fb);
-	console_unlock();
 	mutex_unlock(&fb->lock);
+	if (val)
+		return;
+
+	info = vgfbm_get_info(fb);
+	if (info) {
+		console_lock();
+		if (lock_fb_info(info)) {
+			mutex_lock(&fb->lock);
+			vgfb_check_switch(fb);
+			mutex_unlock(&fb->lock);
+			unlock_fb_info(info);
+		}
+		console_unlock();
+		vgfbm_put_info(info);
+	}
 	vgfbm_release(fb);
 }
 
@@ -562,12 +565,12 @@ bool vgfb_check_switch(struct vgfbm *fb)
 	fb->info->fix.smem_len = fb->info->var.xres_virtual
 				* fb->info->var.yres_virtual * 4;
 	fb->info->fix.line_length = fb->info->var.xres_virtual * 4;
-	complete_all(&fb->resize_done);
 
+	fb->info->state = FBINFO_STATE_RUNNING;
 	event.info = fb->info;
 	event.data = &fb->videomode;
-
 	fb_notifier_call_chain(FB_EVENT_MODE_CHANGE_ALL, &event);
+	complete_all(&fb->resize_done);
 
 	return true;
 }
@@ -577,9 +580,6 @@ int vgfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 	int ret = 0;
 	struct vgfbm *fb = *(struct vgfbm **)info->par;
 
-	if (info->state != FBINFO_STATE_RUNNING)
-		return -EPERM;
-
 	mutex_lock(&fb->lock);
 	if (!vgfb_acquire_mmap(fb)) {
 		pr_err("vgfb: vgfb_acquire_mmap failed\n");
@@ -587,8 +587,17 @@ int vgfb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 		goto end;
 	}
 	if (fb->next_screen_base) {
-		pr_info("vgfb: screen resolution change in progress\n");
+		pr_debug("vgfb: screen resolution change in progress\n");
 		ret = -EAGAIN;
+		goto failed;
+	}
+	if (!info->screen_base) {
+		pr_err("vgfb: screen buffer memory unavailable\n");
+		ret = -ENOMEM;
+		goto failed;
+	}
+	if (info->state != FBINFO_STATE_RUNNING) {
+		ret = -EPERM;
 		goto failed;
 	}
 	ret = remap_vmalloc_range(vma, info->screen_base, vma->vm_pgoff);
@@ -624,9 +633,6 @@ int do_vgfb_set_par(struct fb_info *info)
 	struct fb_videomode *mode;
 	struct vgfbm *fb = *(struct vgfbm **)info->par;
 
-	if (info->state != FBINFO_STATE_RUNNING)
-		return -EPERM;
-
 	mode = &list_entry(fb->info->modelist.next, struct fb_modelist, list)
 		->mode;
 	if (info->var.xres != mode->xres || info->var.yres != mode->yres) {
@@ -636,26 +642,15 @@ int do_vgfb_set_par(struct fb_info *info)
 	if (fb->videomode.xres == mode->xres
 	 && fb->videomode.yres == mode->yres)
 		return 0;
-	vgfb_check_switch(fb);
+
 	info->mode = &fb->videomode;
 	fb->videomode = *mode;
 	fb->old_var = info->var;
+	vgfb_check_switch(fb);
 	return 0;
 }
 
 int vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info)
-{
-	int ret;
-	struct vgfbm *fb = *(struct vgfbm **)info->par;
-
-	mutex_lock(&fb->lock);
-	ret = do_vgfb_pan_display(var, info);
-	mutex_unlock(&fb->lock);
-
-	return ret;
-}
-
-int do_vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info)
 {
 	if (info->state != FBINFO_STATE_RUNNING)
 		return -EPERM;
@@ -678,6 +673,9 @@ int vgfb_set_resolution(struct vgfbm *fb, const unsigned long resolution[2])
 
 	if (resolution[0] == 0 || resolution[1] == 0)
 		return -EINVAL;
+
+	if (!fb->info)
+		return -ENODEV;
 
 	var = fb->info->var;
 	mode = &list_entry(fb->info->modelist.next, struct fb_modelist, list)
@@ -706,7 +704,9 @@ int vgfb_set_resolution(struct vgfbm *fb, const unsigned long resolution[2])
 
 	if (fb->next_screen_base)
 		vfree(fb->next_screen_base);
+
 	fb->next_screen_base = mem;
+	fb->info->state = FBINFO_STATE_SUSPENDED;
 	*mode = tmp_mode;
 
 	return 0;

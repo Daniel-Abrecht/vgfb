@@ -67,6 +67,26 @@ void vgfbm_release(struct vgfbm *vgfbm)
 	kfree(vgfbm);
 }
 
+struct fb_info *vgfbm_get_info(struct vgfbm *vgfbm)
+{
+	struct fb_info *info;
+
+	mutex_lock(&vgfbm->info_lock);
+	info = vgfbm->info;
+	if (info)
+		atomic_inc(&info->count);
+	mutex_unlock(&vgfbm->info_lock);
+	return info;
+}
+
+void vgfbm_put_info(struct fb_info *info)
+{
+	if (!atomic_dec_and_test(&info->count))
+		return;
+	if (info->fbops->fb_destroy)
+		info->fbops->fb_destroy(info);
+}
+
 int vgfbmx_open(struct inode *inode, struct file *file)
 {
 	int ret = 0;
@@ -97,16 +117,20 @@ ssize_t vgfbmx_read(struct file *file, char __user *buf, size_t count,
 	loff_t *ppos)
 {
 	int ret;
-	struct vgfbm *vgfbm = file->private_data;
+	struct fb_info *info = vgfbm_get_info(file->private_data);
 
-	mutex_lock(&vgfbm->info_lock);
-	if (!vgfbm->info) {
-		mutex_unlock(&vgfbm->info_lock);
+	if (!info)
 		return -ENODEV;
+	if (!lock_fb_info(info)) {
+		ret = -ENODEV;
+		goto end;
 	}
-	ret = vgfb_read(vgfbm->info, buf, count, ppos);
-	mutex_unlock(&vgfbm->info_lock);
 
+	ret = vgfb_read(info, buf, count, ppos);
+	unlock_fb_info(info);
+
+end:
+	vgfbm_put_info(info);
 	return ret;
 }
 
@@ -114,16 +138,20 @@ ssize_t vgfbmx_write(struct file *file, const char __user *buf, size_t count,
 	loff_t *ppos)
 {
 	ssize_t ret;
-	struct vgfbm *vgfbm = file->private_data;
+	struct fb_info *info = vgfbm_get_info(file->private_data);
 
-	mutex_lock(&vgfbm->info_lock);
-	if (!vgfbm->info) {
-		mutex_unlock(&vgfbm->info_lock);
+	if (!info)
 		return -ENODEV;
+	if (!lock_fb_info(info)) {
+		ret = -ENODEV;
+		goto end;
 	}
-	ret = vgfb_write(vgfbm->info, buf, count, ppos);
-	mutex_unlock(&vgfbm->info_lock);
 
+	ret = vgfb_write(info, buf, count, ppos);
+	unlock_fb_info(info);
+
+end:
+	vgfbm_put_info(info);
 	return ret;
 }
 
@@ -138,81 +166,88 @@ int vgfbmx_close(struct inode *inode, struct file *file)
 	return 0;
 }
 
-int vgfbm_get_vscreeninfo_user(const struct vgfbm *vgfbm,
+int vgfbm_get_vscreeninfo_user(const struct fb_info *info,
 	struct fb_var_screeninfo __user *var)
 {
 	struct fb_var_screeninfo v;
 
-	v = vgfbm->info->var;
+	v = info->var;
 	if (copy_to_user(var, &v, sizeof(v)))
 		return -EFAULT;
 	return 0;
 }
 
-int vgfbm_set_vscreeninfo_user(struct vgfbm *vgfbm,
+int vgfbm_set_vscreeninfo_user(struct fb_info *info,
 	const struct fb_var_screeninfo __user *var)
 {
+	struct vgfbm *fb = *(struct vgfbm **)info->par;
 	struct fb_var_screeninfo v;
 	int ret;
 
-	mutex_lock(&vgfbm->lock);
+	if (copy_from_user(&v, var, sizeof(v)))
+		return -EFAULT;
 
-	if (copy_from_user(&v, var, sizeof(v))) {
-		ret = -EFAULT;
-		goto end;
-	}
+	if (v.bits_per_pixel != 32)
+		return -EINVAL;
 
-	if (v.bits_per_pixel != 32) {
-		ret = -EINVAL;
-		goto end;
-	}
+	if (v.xoffset != 0)
+		return -EINVAL;
 
-	if (v.xoffset != 0) {
-		ret = -EINVAL;
-		goto end;
-	}
-
-	if (v.yoffset > v.yres) {
-		ret = -EINVAL;
-		goto end;
-	}
+	if (v.yoffset > v.yres)
+		return -EINVAL;
 
 	console_lock();
-	ret = vgfb_set_resolution(vgfbm, (unsigned long[]){v.xres, v.yres});
+	if (!lock_fb_info(info)) {
+		console_unlock();
+		return -ENODEV;
+	}
+
+	mutex_lock(&fb->lock);
+	ret = vgfb_set_resolution(fb, (unsigned long[]){v.xres, v.yres});
+	mutex_unlock(&fb->lock);
 	if (ret < 0)
-		goto end_cu;
+		goto end;
 
-	ret = vgfb_check_var(&v, vgfbm->info);
+	ret = vgfb_check_var(&v, info);
 	if (ret < 0)
-		goto end_cu;
+		goto end;
 
-	vgfbm->info->var = v;
-	do_vgfb_set_par(vgfbm->info);
+	info->var = v;
+	vgfb_set_par(info);
 
-end_cu:
-	console_unlock();
 end:
-	mutex_unlock(&vgfbm->lock);
+	unlock_fb_info(info);
+	console_unlock();
 	return 0;
 }
 
-int vgfbm_pan_display(struct vgfbm *vgfbm,
+int vgfbm_pan_display(struct fb_info *info,
 	const struct fb_var_screeninfo __user *var)
 {
+	int ret;
 	struct fb_var_screeninfo v;
 
 	if (copy_from_user(&v, var, sizeof(v)))
 		return -EFAULT;
-	return vgfb_pan_display(&v, vgfbm->info);
+
+	console_lock();
+	if (!lock_fb_info(info)) {
+		console_unlock();
+		return -ENODEV;
+	}
+	ret = vgfb_pan_display(&v, info);
+	unlock_fb_info(info);
+	console_unlock();
+	return ret;
 }
 
 
-int vgfbm_get_fscreeninfo_user(const struct vgfbm *vgfbm,
+int vgfbm_get_fscreeninfo_user(const struct fb_info *info,
 	struct fb_fix_screeninfo __user *fix)
 {
 	struct fb_fix_screeninfo f;
 
-	f = vgfbm->info->fix;
+	f = info->fix;
 	if (copy_to_user(fix, &f, sizeof(f)))
 		return -EFAULT;
 	return 0;
@@ -224,22 +259,21 @@ long vgfbmx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	int tmp;
 	void __user *argp = (void __user *)arg;
 	struct vgfbm *vgfbm = file->private_data;
+	struct fb_info *info;
 
-	mutex_lock(&vgfbm->info_lock);
-	if (!vgfbm->info || !lock_fb_info(vgfbm->info)) {
-		mutex_unlock(&vgfbm->info_lock);
+	info = vgfbm_get_info(vgfbm);
+	if (!info)
 		return -ENODEV;
-	}
 
 	switch (cmd) {
 	case FBIOGET_VSCREENINFO:
-		ret = vgfbm_get_vscreeninfo_user(vgfbm, argp);
+		ret = vgfbm_get_vscreeninfo_user(info, argp);
 		break;
 	case FBIOPUT_VSCREENINFO:
-		ret = vgfbm_set_vscreeninfo_user(vgfbm, argp);
+		ret = vgfbm_set_vscreeninfo_user(info, argp);
 		break;
 	case FBIOGET_FSCREENINFO:
-		ret = vgfbm_get_fscreeninfo_user(vgfbm, argp);
+		ret = vgfbm_get_fscreeninfo_user(info, argp);
 		break;
 	case FBIOPUTCMAP:
 		ret = -EINVAL;
@@ -248,9 +282,7 @@ long vgfbmx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		ret = -EINVAL;
 		break;
 	case FBIOPAN_DISPLAY:
-		console_lock();
-		ret = vgfbm_pan_display(vgfbm, argp);
-		console_unlock();
+		ret = vgfbm_pan_display(info, argp);
 		break;
 	case FBIO_CURSOR:
 		ret = -EINVAL;
@@ -265,25 +297,40 @@ long vgfbmx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		ret = 0;
 		break;
 	case VGFBM_GET_FB_MINOR:
-		tmp = vgfbm->info->node;
+		tmp = info->node;
 		ret = copy_to_user(argp, &tmp, sizeof(int)) ? -EFAULT : 0;
 		break;
 	default:
-		ret = vgfb_ioctl(vgfbm->info, cmd, arg);
+		if (!lock_fb_info(info)) {
+			ret = -ENODEV;
+			break;
+		}
+		ret = vgfb_ioctl(info, cmd, arg);
+		unlock_fb_info(info);
 		break;
 	}
 
-	unlock_fb_info(vgfbm->info);
-	mutex_unlock(&vgfbm->info_lock);
+	vgfbm_put_info(info);
 
 	return ret;
 }
 
 int vgfbmx_mmap(struct file *file, struct vm_area_struct *vma)
 {
-	struct vgfbm *vgfbm = file->private_data;
+	int ret;
+	struct fb_info *info = vgfbm_get_info(file->private_data);
 
-	return vgfb_mmap(vgfbm->info, vma);
+	if (!info)
+		return -ENODEV;
+	if (!lock_fb_info(info)) {
+		ret = -ENODEV;
+		goto end;
+	}
+	ret = vgfb_mmap(info, vma);
+	unlock_fb_info(info);
+end:
+	vgfbm_put_info(info);
+	return ret;
 }
 
 const struct file_operations vgfbmx_opts = {
