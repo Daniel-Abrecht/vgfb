@@ -14,6 +14,7 @@
 #include <linux/mutex.h>
 #include <linux/cdev.h>
 #include <linux/slab.h>
+#include <linux/mm.h>
 #include <linux/fs.h>
 #include "vgfbmx.h"
 #include "vgfb.h"
@@ -36,11 +37,14 @@ static struct vgfbmx vgfbmx;
 
 bool vgfbm_acquire(struct vgfbm *vgfbm)
 {
-	unsigned long val = vgfbm->count + 1;
+	unsigned long val;
 
+	mutex_lock(&vgfbm->count_lock);
+	val = vgfbm->count + 1;
 	if (!val)
 		return false;
 	vgfbm->count = val;
+	mutex_unlock(&vgfbm->count_lock);
 	return true;
 }
 
@@ -48,10 +52,10 @@ void vgfbm_release(struct vgfbm *vgfbm)
 {
 	unsigned long val;
 
-	mutex_lock(&vgfbm->lock);
+	mutex_lock(&vgfbm->count_lock);
 	val = vgfbm->count;
 	if (!val) {
-		mutex_unlock(&vgfbm->lock);
+		mutex_unlock(&vgfbm->count_lock);
 		pr_crit("underflow; use-after-free\n");
 		dump_stack();
 		return;
@@ -59,11 +63,11 @@ void vgfbm_release(struct vgfbm *vgfbm)
 	val--;
 	vgfbm->count = val;
 	if (val) {
-		mutex_unlock(&vgfbm->lock);
+		mutex_unlock(&vgfbm->count_lock);
 		return;
 	}
 	vgfb_free(vgfbm);
-	mutex_unlock(&vgfbm->lock);
+	mutex_unlock(&vgfbm->count_lock);
 	kfree(vgfbm);
 }
 
@@ -100,6 +104,7 @@ int vgfbmx_open(struct inode *inode, struct file *file)
 
 	mutex_init(&vgfbm->lock);
 	mutex_init(&vgfbm->info_lock);
+	mutex_init(&vgfbm->count_lock);
 
 	file->private_data = vgfbm;
 	vgfbm_acquire(vgfbm);
@@ -177,48 +182,178 @@ int vgfbm_get_vscreeninfo_user(const struct fb_info *info,
 	return 0;
 }
 
-int vgfbm_set_vscreeninfo_user(struct fb_info *info,
-	const struct fb_var_screeninfo __user *var)
+int vgfbm_check_var(struct fb_var_screeninfo *var, struct fb_info *info)
 {
-	struct vgfbm *fb = *(struct vgfbm **)info->par;
-	struct fb_var_screeninfo v;
+	struct fb_videomode *mode;
+	struct fb_var_screeninfo tmp = *var;
+
+	if (tmp.bits_per_pixel != 32)
+		return -EINVAL;
+
+	if (tmp.xoffset != 0)
+		return -EINVAL;
+
+	if (tmp.yoffset > tmp.yres)
+		return -EINVAL;
+
+	mode = &list_entry(info->modelist.next, struct fb_modelist, list)
+		->mode;
+
+	if (mode->xres == tmp.xres && mode->yres == tmp.yres)
+		return 0;
+
+	*var = info->var;
+	var->activate = tmp.activate;
+
+	var->xres = tmp.xres;
+	var->yres = tmp.yres;
+	var->xres_virtual = tmp.xres;
+	var->yres_virtual = tmp.yres * 2;
+	var->xoffset = tmp.xoffset;
+	var->yoffset = tmp.yoffset;
+	var->pixclock = 1000000000000lu / var->xres
+			/ var->yres / VGFB_REFRESH_RATE;
+
+	if (var->bits_per_pixel == 32) {
+		var->red    = (struct fb_bitfield){ 0, 8, 0};
+		var->green  = (struct fb_bitfield){ 8, 8, 0};
+		var->blue   = (struct fb_bitfield){16, 8, 0};
+		var->transp = (struct fb_bitfield){24, 8, 0};
+	}
+
+	return 0;
+}
+
+
+int vgfbm_set_par(struct fb_info *info)
+{
 	int ret;
+	struct vgfbm *fb = *(struct vgfbm **)info->par;
+
+	mutex_lock(&fb->lock);
+	ret = vgfbm_set_par(info);
+	mutex_unlock(&fb->lock);
+	return ret;
+}
+
+int vgfbm_do_set_par(struct fb_info *info)
+{
+	int ret;
+	size_t size, size_aligned;
+	void *mem;
+	struct fb_videomode *mode;
+	struct vgfbm *fb = *(struct vgfbm **)info->par;
+	struct fb_event event;
+
+	mode = &list_entry(fb->info->modelist.next, struct fb_modelist, list)
+		->mode;
+
+	fb_var_to_videomode(mode, &info->var);
+	mode->refresh = VGFB_REFRESH_RATE;
+
+	if (fb->videomode.xres == mode->xres
+	 && fb->videomode.yres == mode->yres)
+		goto end;
+
+	size = info->var.xres_virtual * info->var.yres_virtual * 4;
+	size_aligned = PAGE_ALIGN(size);
+
+	mem = vmalloc_32_user(size_aligned);
+	if (!mem) {
+		pr_info("vgfbm: vmalloc_32_user failed\n");
+		ret = -ENOMEM;
+		goto failed;
+	}
+	pr_debug("vgfbm: allocated screen memory %p\n", mem);
+
+	ret = vgfb_set_screenbase(fb, mem);
+	if (ret < 0) {
+		pr_info("vgfbm: vgfb_set_screenbase failed\n");
+		vfree(mem);
+		goto failed;
+	}
+
+	info->fix.ypanstep = info->var.yres_virtual - info->var.yres;
+	info->fix.smem_start = 0;
+	info->fix.smem_len = info->var.xres_virtual
+				* info->var.yres_virtual * 4;
+	info->fix.line_length = info->var.xres_virtual * 4;
+
+	info->state = FBINFO_STATE_RUNNING;
+	event.info = info;
+	event.data = &fb->videomode;
+	fb_notifier_call_chain(FB_EVENT_MODE_CHANGE_ALL, &event);
+
+	info->mode = &fb->videomode;
+	fb->videomode = *mode;
+	fb->old_var = info->var;
+
+end:
+	return 0;
+
+failed:
+	info->var = fb->old_var;
+	return ret;
+}
+
+int vgfbm_set_vscreeninfo_user(struct fb_info *info,
+	struct fb_var_screeninfo __user *var)
+{
+	int ret;
+	struct fb_var_screeninfo v;
+	struct vgfbm *fb = *(struct vgfbm **)info->par;
 
 	if (copy_from_user(&v, var, sizeof(v)))
 		return -EFAULT;
-
-	if (v.bits_per_pixel != 32)
-		return -EINVAL;
-
-	if (v.xoffset != 0)
-		return -EINVAL;
-
-	if (v.yoffset > v.yres)
-		return -EINVAL;
 
 	console_lock();
 	if (!lock_fb_info(info)) {
 		console_unlock();
 		return -ENODEV;
 	}
-
 	mutex_lock(&fb->lock);
-	ret = vgfb_set_resolution(fb, (unsigned long[]){v.xres, v.yres});
+	ret = vgfbm_set_vscreeninfo(info, &v);
 	mutex_unlock(&fb->lock);
-	if (ret < 0)
-		goto end;
-
-	ret = vgfb_check_var(&v, info);
-	if (ret < 0)
-		goto end;
-
-	info->var = v;
-	vgfb_set_par(info);
-
-end:
 	unlock_fb_info(info);
 	console_unlock();
+
+	if (ret < 0)
+		return ret;
+
+	if (copy_to_user(var, &v, sizeof(v)))
+		return -EFAULT;
+
 	return 0;
+}
+
+int vgfbm_set_vscreeninfo(struct fb_info *info,
+	struct fb_var_screeninfo *var)
+{
+	int ret;
+
+	ret = vgfbm_check_var(var, info);
+	if (ret < 0)
+		return ret;
+
+	if ((var->activate & FB_ACTIVATE_MASK) == FB_ACTIVATE_NOW) {
+		info->var = *var;
+		return vgfbm_do_set_par(info);
+	}
+
+	return 0;
+}
+
+int vgfbm_set_resolution(struct fb_info *info,
+			const unsigned long resolution[2])
+{
+	struct fb_var_screeninfo var = info->var;
+
+	var.xres = resolution[0];
+	var.yres = resolution[1];
+	var.pixclock = 1000000000000lu / var.xres
+			/ var.yres / VGFB_REFRESH_RATE;
+
+	return vgfbm_set_vscreeninfo(info, &var);
 }
 
 int vgfbm_pan_display(struct fb_info *info,
@@ -301,12 +436,7 @@ long vgfbmx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		ret = copy_to_user(argp, &tmp, sizeof(int)) ? -EFAULT : 0;
 		break;
 	default:
-		if (!lock_fb_info(info)) {
-			ret = -ENODEV;
-			break;
-		}
-		ret = vgfb_ioctl(info, cmd, arg);
-		unlock_fb_info(info);
+		ret = -EINVAL;
 		break;
 	}
 

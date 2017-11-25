@@ -15,36 +15,37 @@
 
 #define VGFB_REFRESH_RATE 60lu
 
-struct vgfbm {
+struct vm_mem_entry {
 	struct mutex lock;
 	unsigned long count;
-	unsigned long mem_count;
+	void *memory;
+	struct vgfbm *fb;
+};
+
+struct vgfbm {
+	struct mutex count_lock;
+	unsigned long count;
+	struct mutex lock;
 	struct platform_device *pdev;
 	struct mutex info_lock;
 	struct fb_info *info;
+	struct vm_mem_entry *last_mem_entry;
 	struct fb_var_screeninfo old_var;
 	struct fb_videomode videomode;
-	int signal;
-	struct completion resize_done;
-	void *screen_base;
-	void *next_screen_base;
 	u32 colormap[256];
 };
 
-int vgfb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg);
 ssize_t vgfb_read(struct fb_info *info, char __user *buf, size_t count,
 	loff_t *ppos);
 ssize_t vgfb_write(struct fb_info *info, const char __user *buf, size_t count,
 	loff_t *ppos);
-int vgfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info);
 int vgfb_realloc_screen(struct vgfbm *fb);
 void vgfb_free_screen(struct vgfbm *fb);
 int vgfb_mmap(struct fb_info *info, struct vm_area_struct *vma);
-int do_vgfb_set_par(struct fb_info *info);
 int vgfb_set_par(struct fb_info *info);
+int vgfb_check_var(struct fb_var_screeninfo *var, struct fb_info *info);
 int vgfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 	u_int transp, struct fb_info *info);
-int vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info);
 int vgfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *info);
 void vgfb_fillrect(struct fb_info *info, const struct fb_fillrect *rect);
 void vgfb_copyarea(struct fb_info *info, const struct fb_copyarea *region);
@@ -53,15 +54,15 @@ int vfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 		 u_int transp, struct fb_info *info);
 void vgfb_fb_destroy(struct fb_info *info);
 
-bool vgfb_acquire_mmap(struct vgfbm *fb);
-void vgfb_release_mmap(struct vgfbm *fb);
+bool vgfb_acquire_screen_memory(struct vm_mem_entry *fb);
+void vgfb_release_screen_memory(struct vm_mem_entry *fb);
 bool vgfb_check_switch(struct vgfbm *fb);
+
+int vgfb_set_screenbase(struct vgfbm *fb, void *memory);
 
 int vgfb_create(struct vgfbm *vgfb);
 void vgfb_remove(struct vgfbm *vgfb);
 void vgfb_free(struct vgfbm *vgfb);
-
-int vgfb_set_resolution(struct vgfbm *fb, const unsigned long resolution[2]);
 
 int vgfb_init(void);
 void vgfb_exit(void);

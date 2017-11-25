@@ -22,7 +22,7 @@ private:
 public:
   explicit FBViewer(QWidget *parent = 0);
   void resizeEvent(QResizeEvent* event);
-  bool setFB(const char* path);
+  bool setFB(int new_fd);
   bool checkChanges();
 public slots:
   void update();

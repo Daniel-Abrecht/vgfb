@@ -81,7 +81,6 @@ bool FBViewer::checkChanges(){
     if( memory && memory != MAP_FAILED )
       munmap(memory,memory_size);
     memory_size = 0;
-    while( ioctl(fb, VGFB_WAIT_RESIZE_DONE) == -1 && errno == EINTR );
     memory = (unsigned char*)mmap(0, size, PROT_READ, MAP_SHARED, fb, 0);
     if( !memory || memory==MAP_FAILED ){
       std::cerr << "mmap failed: " << strerror(errno) << std::endl;
@@ -97,14 +96,10 @@ bool FBViewer::checkChanges(){
   return true;
 }
 
-bool FBViewer::setFB(const char* path){
+bool FBViewer::setFB(int new_fb){
   if(fb)
     ::close(fb);
-  fb = ::open(path,O_RDWR);
-  if( fb == -1 ){
-    std::cerr << "open failed: " << strerror(errno) << std::endl;
-    return false;
-  }
+  fb = new_fb;
   {
     int fb_minor;
     if( ioctl(fb, VGFBM_GET_FB_MINOR, &fb_minor) != -1 )
@@ -117,13 +112,24 @@ bool FBViewer::setFB(const char* path){
 }
 
 int main(int argc, char **argv){
-  const char* fb = argc >= 2 ? argv[1] : "/dev/vgfbmx";
+  int fd = -1;
+  const char* tmp = argc >= 2 ? argv[1] : "/dev/vgfbmx";
+
+  try {
+    fd = std::stoi(tmp);
+  } catch(std::invalid_argument& e) {
+    fd = ::open(tmp,O_RDWR);
+    if( fd == -1 ){
+      std::cerr << "open failed: " << strerror(errno) << std::endl;
+      return 1;
+    }
+  }
 
   QApplication app( argc, argv );
 
   FBViewer viewer;
-  if(!viewer.setFB(fb))
-    return 1;
+  if(!viewer.setFB(fd))
+    return 2;
   viewer.show();
 
   return app.exec();
