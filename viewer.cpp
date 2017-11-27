@@ -1,13 +1,6 @@
-/*
- * Copyright (C) 2017 Daniel Patrick Abrecht
- * 
- * This program is dual licensed under the MIT License and
- * the GNU General Public License v2.0
- */
-
 #include <errno.h>
 #include <linux/fb.h>
-#include <vg.h>
+#include <linux/vg.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
