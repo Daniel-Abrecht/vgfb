@@ -1,10 +1,3 @@
-/*
- * Copyright (C) 2017 Daniel Patrick Abrecht
- *
- * This module is dual licensed under the MIT License and
- * the GNU General Public License v2.0
- */
-
 #include <linux/console.h>
 #include <linux/init.h>
 #include <linux/uaccess.h>
@@ -20,7 +13,7 @@
 #include "vgfb.h"
 #include "vg.h"
 
-MODULE_LICENSE("Dual MIT/GPL");
+MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Daniel Patrick Abrecht");
 MODULE_DESCRIPTION("Virtual graphics frame buffer driver, allows to dynamically allocate framebuffer devices. This is intended to allow container hypervisors to provide virtual displays to it's containers on the fly.");
 
